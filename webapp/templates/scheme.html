@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block body %}
+<h1>{{ scheme.title }}</h1>
+<p>{{ scheme.description }}</p>
+<p><strong>Source:</strong> <a href="{{ scheme.source_url }}" target="_blank">Official page</a></p>
+<h3>Extracted snippet</h3>
+<pre>{{ snippet }}</pre>
+<h3>Parsed rule (JSON)</h3>
+<pre>{{ rule_json }}</pre>
+<h3>Evaluation (based on your last profile)</h3>
+<pre>{{ evaluation }}</pre>
+{% endblock %}

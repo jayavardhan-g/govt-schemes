@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block body %}
+<h1>Check Scheme Eligibility (Demo)</h1>
+<form action="/match" method="post">
+  <label>Age: <input type="number" name="age" required></label><br>
+  <label>Income (annual): <input type="number" name="income" required></label><br>
+  <label>Gender:
+    <select name="gender">
+      <option value="">--</option>
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+    </select>
+  </label><br>
+  <label>State: <input type="text" name="state"></label><br>
+  <label>Occupation: <input type="text" name="occupation"></label><br>
+  <label>Caste/Category: <input type="text" name="caste"></label><br>
+  <label>Disability:
+    <select name="disability">
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  </label><br>
+  <label>Household size: <input type="number" name="household_size" value="1"></label><br>
+  <button type="submit">Check</button>
+</form>
+{% endblock %}

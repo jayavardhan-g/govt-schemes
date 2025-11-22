@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block body %}
+<h1>Results</h1>
+<p>Your profile: {{ profile }}</p>
+<table>
+  <thead><tr><th>Scheme</th><th>Result</th><th>Score</th><th>Action</th></tr></thead>
+  <tbody>
+  {% for r in results %}
+    <tr>
+      <td>{{ r.title }}</td>
+      <td>{{ r.result }}</td>
+      <td>{{ '%.2f'|format(r.score) }}</td>
+      <td><a href="/scheme/{{ r.scheme_id }}">View</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
