@@ -1,12 +1,146 @@
 {% extends 'base.html' %}
 {% block body %}
-<h1>{{ scheme.title }}</h1>
-<p>{{ scheme.description }}</p>
-<p><strong>Source:</strong> <a href="{{ scheme.source_url }}" target="_blank">Official page</a></p>
-<h3>Extracted snippet</h3>
-<pre>{{ snippet }}</pre>
-<h3>Parsed rule (JSON)</h3>
-<pre>{{ rule_json }}</pre>
-<h3>Evaluation (based on your last profile)</h3>
-<pre>{{ evaluation }}</pre>
+
+<div class="scheme-page">
+  <header class="scheme-header">
+    <div>
+      <h1 class="title">{{ scheme.title }}</h1>
+      <div class="muted">Source: <a href="{{ scheme.source_url }}" target="_blank">Official page</a></div>
+    </div>
+    <div class="actions">
+      <a class="btn" href="{{ url_for('results') }}">← Back to results</a>
+      {% if session.get('admin') %}
+        <a class="btn" href="/admin/verify/{{ scheme.id }}">Edit rule</a>
+      {% endif %}
+    </div>
+  </header>
+
+  <section class="summary">
+    <h3>Quick summary</h3>
+    <p class="desc">{{ scheme.description or "No short description." }}</p>
+
+    {% if evaluation %}
+      {% if evaluation.error %}
+        <div class="badge badge-error">Error</div>
+        <div class="status-text">Evaluation error: {{ evaluation.error }}</div>
+      {% else %}
+        <div class="status-row">
+          <span class="badge {% if evaluation.label == 'Eligible' %}badge-eligible{% elif evaluation.label == 'Maybe Eligible' %}badge-maybe{% else %}badge-not-eligible{% endif %}">
+            {{ evaluation.label }}
+          </span>
+          <div class="status-text">
+            Match: <strong>{{ '%.2f'|format(evaluation.score) }}%</strong>
+            {% if evaluation.parser_confidence %} — Parser confidence: {{ evaluation.parser_confidence }}{% endif %}
+          </div>
+        </div>
+      {% endif %}
+    {% else %}
+      <div class="muted">No evaluation available for your last profile. Run the profile check from the homepage to see match details here.</div>
+    {% endif %}
+  </section>
+
+{# Short explanation banner for non-admin users #}
+{% if not session.get('admin') %}
+  <div class="explain-banner">
+    {% if skipped_total and skipped_total > 0 %}
+      <strong>Tip:</strong> We noticed {{ skipped_total }} missing field{{ 's' if skipped_total > 1 }} used by the scheme rules.
+      Missing fields lower the match percentage — to get a more accurate result, please
+      <a href="{{ url_for('index') }}">complete your profile</a>
+      (for example: age, gender, occupation, state) and re-run the check.
+    {% else %}
+      <strong>Tip:</strong> Complete your profile on the
+      <a href="{{ url_for('index') }}">homepage</a>
+      to get the most accurate matches. Some schemes require specific fields (e.g., caste, occupation).
+    {% endif %}
+  </div>
+{% endif %}
+
+
+  <section class="rule">
+    <h3>Parsed rule</h3>
+    {% if session.get('admin') %}
+      {% if rule_json %}
+        <pre class="rule-json">{{ rule_json }}</pre>
+      {% else %}
+        <div class="muted">No parsed rule stored for this scheme.</div>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="details">
+    <h3>Matching details</h3>
+
+    {% if evaluation_details and evaluation_details|length > 0 %}
+      {% for det in evaluation_details %}
+        <div class="rule-card">
+          <div class="rule-header">
+            <strong>Rule #{{ det.rule_id or loop.index }}</strong>
+            <span class="rule-meta">{{ det.label }} — {{ '%.2f'|format(det.score) }}%</span>
+          </div>
+
+          <div class="rule-body">
+            {% if det.snippet and session.get('admin') %}
+              <div class="snippet-small"><em>Snippet:</em> {{ det.snippet }}</div>
+            {% endif %}
+
+            <ul class="eval-list">
+              {% for ev in det.evaluations %}
+                <li class="eval-item {% if ev.skipped %}skipped{% elif ev.status %}passed{% else %}failed{% endif %}">
+                  <div class="left">
+                    <div class="field"><strong>{{ ev.atom.field or 'Requirement' }}</strong> <span class="op">({{ ev.atom.op }} {{ ev.atom.value }})</span></div>
+                    <div class="msg">{{ ev.msg }}</div>
+                  </div>
+                  <div class="right">
+                    {% if ev.skipped %}
+                      <span class="pill neutral">Missing</span>
+                    {% elif ev.status %}
+                      <span class="pill success">Passed</span>
+                    {% else %}
+                      <span class="pill danger">Failed</span>
+                    {% endif %}
+                  </div>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="muted">No matching details available.</div>
+    {% endif %}
+  </section>
+</div>
+
+<style>
+.scheme-page { max-width:900px; margin:12px auto; padding:8px; }
+.scheme-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.title { margin:0 0 6px 0; font-size:1.3rem; }
+.muted { color:#666; }
+.actions .btn { margin-left:8px; }
+.badge { padding:6px 10px; border-radius:10px; color:#fff; font-weight:700; }
+.badge-eligible { background:#28a745; }
+.badge-maybe { background:#f0ad4e; color:#111; }
+.badge-not-eligible { background:#d9534f; }
+.badge-error { background:#b02a37; }
+.status-row { display:flex; gap:12px; align-items:center; margin-top:8px; }
+.explain-banner { background:#fffbe6; border:1px solid #f1e5b8; padding:10px; border-radius:6px; margin:10px 0; color:#6b4f00; }
+.snippet-box { background:#fff; border:1px solid #eee; padding:10px; border-radius:6px; white-space:pre-wrap; }
+.rule-json { background:#f7f7f9; padding:10px; border-radius:6px; white-space:pre-wrap; }
+.rule-card { border:1px solid #eee; padding:10px; border-radius:6px; margin-bottom:10px; background:#fff;}
+.rule-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.rule-meta { font-weight:700; }
+.eval-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.eval-item { display:flex; justify-content:space-between; gap:12px; padding:8px; border-radius:6px; border:1px solid #f3f3f3; }
+.eval-item.passed { background:#f6fff7; border-color:#e1f5e8; }
+.eval-item.failed { background:#fff6f6; border-color:#f3d9d9; }
+.eval-item.skipped { background:#fffaf0; border-color:#faecd6; }
+.field { font-weight:600; }
+.msg { font-size:0.9rem; color:#555; margin-top:6px; }
+.pill { padding:4px 8px; border-radius:999px; font-weight:700; }
+.pill.success { background:#e6f7ea; color:#187a3a; border:1px solid #cfead2; }
+.pill.danger { background:#ffe9e9; color:#a12b2b; border:1px solid #f0c8c8; }
+.pill.neutral { background:#fff7e6; color:#a06b00; border:1px solid #f1dfbf; }
+.small-link { font-size:0.9rem; color:#007bff; text-decoration:underline; }
+</style>
+
 {% endblock %}

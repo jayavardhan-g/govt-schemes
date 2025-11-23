@@ -3,7 +3,9 @@
 <h1>Check Scheme Eligibility (Demo)</h1>
 <form action="/match" method="post">
   <label>Age: <input type="number" name="age" required></label><br>
+
   <label>Income (annual): <input type="number" name="income" required></label><br>
+
   <label>Gender:
     <select name="gender">
       <option value="">--</option>
@@ -11,16 +13,78 @@
       <option value="female">Female</option>
     </select>
   </label><br>
-  <label>State: <input type="text" name="state"></label><br>
+
+  <!-- STATE: replace text input with select populated from `states` -->
+  <label>State:
+    <select name="state" id="stateSelect">
+      <option value="">-- Select state/UT --</option>
+      {% if states %}
+        {% for s in states %}
+          <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      {% endif %}
+    </select>
+  </label><br>
+
   <label>Occupation: <input type="text" name="occupation"></label><br>
-  <label>Caste/Category: <input type="text" name="caste"></label><br>
+
+  <!-- CASTE: replace text input with select populated from `castes` -->
+  <label>Caste/Category:
+    <select name="caste" id="casteSelect">
+      <option value="">-- Select caste/category --</option>
+      {% if castes %}
+        {% for c in castes %}
+          <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      {% endif %}
+    </select>
+  </label><br>
+
   <label>Disability:
     <select name="disability">
       <option value="no">No</option>
       <option value="yes">Yes</option>
     </select>
   </label><br>
+
   <label>Household size: <input type="number" name="household_size" value="1"></label><br>
   <button type="submit">Check</button>
 </form>
+
+<script>
+// client-side fallback in case template vars are missing (keeps form usable)
+const fallbackStates = [
+  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
+  "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
+  "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
+  "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
+  "Uttar Pradesh","Uttarakhand","West Bengal",
+  "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
+];
+const fallbackCastes = [
+  "General/Unreserved",
+  "Other Backward Classes (OBC)",
+  "Scheduled Caste (SC)",
+  "Scheduled Tribe (ST)",
+  "Economically Weaker Section (EWS)",
+  "Other / Prefer not to say"
+];
+
+(function ensureSelects() {
+  const stateSelect = document.getElementById('stateSelect');
+  if (stateSelect && stateSelect.options.length <= 1) {
+    fallbackStates.forEach(s => {
+      const o = document.createElement('option'); o.value = s; o.text = s; stateSelect.add(o);
+    });
+  }
+  const casteSelect = document.getElementById('casteSelect');
+  if (casteSelect && casteSelect.options.length <= 1) {
+    fallbackCastes.forEach(c => {
+      const o = document.createElement('option'); o.value = c; o.text = c; casteSelect.add(o);
+    });
+  }
+})();
+</script>
+
 {% endblock %}

@@ -13,7 +13,7 @@ from db import init_db, db
 # sample_data now uses SQLAlchemy
 from sample_data import ensure_sample_data
 # matcher uses SQLAlchemy (evaluate_rules_for_profile(profile) and evaluate_rule(rule, profile))
-from matcher import evaluate_rules_for_profile, evaluate_rule
+from matcher import evaluate_rules_for_profile, evaluate_rule, evaluate_rule_with_details
 
 # ORM models
 from models import Scheme, SchemeRule, UserProfile, MatchResult
@@ -26,24 +26,63 @@ init_db(app)
 with app.app_context():
     ensure_sample_data()
 
+INDIAN_STATES_AND_UT = [
+  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
+  "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
+  "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
+  "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
+  "Uttar Pradesh","Uttarakhand","West Bengal",
+  "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
+]
+
+CASTE_CATEGORIES = [
+  "General/Unreserved",
+  "Other Backward Classes (OBC)",
+  "Scheduled Caste (SC)",
+  "Scheduled Tribe (ST)",
+  "Economically Weaker Section (EWS)",
+  "Other / Prefer not to say"
+]
 
 # ---------------- Public routes ----------------
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html',states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
+
+
+# ---------------- Helpers ----------------
+
+def _to_int_or_none(v):
+    try:
+        if v is None or v == '':
+            return None
+        return int(v)
+    except Exception:
+        return None
+
+
+def _to_float_or_none(v):
+    try:
+        if v is None or v == '':
+            return None
+        return float(v)
+    except Exception:
+        return None
+
 
 @app.route('/match', methods=['POST'])
 def match():
-    # Build profile from form fields
+    # Build profile from form fields — preserve None for missing inputs (do not coerce to 0)
     profile = {
-        'age': int(request.form.get('age') or 0),
-        'income': float(request.form.get('income') or 0),
-        'gender': request.form.get('gender') or '',
-        'state': request.form.get('state') or '',
-        'occupation': request.form.get('occupation') or '',
-        'caste': request.form.get('caste') or '',
-        'disability': request.form.get('disability') or 'no',
-        'household_size': int(request.form.get('household_size') or 1)
+        'age': _to_int_or_none(request.form.get('age')),
+        'income': _to_float_or_none(request.form.get('income')),
+        'gender': (request.form.get('gender') or None),
+        'state': (request.form.get('state') or None),
+        'occupation': (request.form.get('occupation') or None),
+        'caste': (request.form.get('caste') or None),
+        'disability': (request.form.get('disability') or None),
+        'household_size': _to_int_or_none(request.form.get('household_size')) or 1
     }
 
     # call matcher which now expects (profile) and returns list of dicts
@@ -58,46 +97,120 @@ def match():
     session['profile'] = profile
     return redirect(url_for('results'))
 
+
 @app.route('/results')
 def results():
     results = session.get('last_results', [])
     profile = session.get('profile', {})
     return render_template('results.html', results=results, profile=profile)
 
+
 @app.route('/scheme/<int:scheme_id>')
 def scheme_detail(scheme_id):
-    # Use ORM to fetch scheme and its rule (first rule)
     s = Scheme.query.get(scheme_id)
     if not s:
         return 'Scheme not found', 404
 
-    r_obj = SchemeRule.query.filter_by(scheme_id=scheme_id).first()
-    rule_json = r_obj.rule_json if r_obj else None
-    snippet = r_obj.snippet if r_obj else ''
-    confidence = r_obj.parser_confidence if r_obj else None
+    # fetch rule rows (could be 0..N)
+    rules = SchemeRule.query.filter_by(scheme_id=scheme_id).all()
 
-    profile = session.get('profile')
-    evaluation = None
-    if profile and rule_json:
-        try:
-            # rule_json may already be a dict (db JSON) or a string
-            rule_obj = rule_json if isinstance(rule_json, dict) else json.loads(rule_json)
-            ok = evaluate_rule(rule_obj, profile)
-            evaluation = { 'eligible': ok }
-        except Exception as e:
-            evaluation = { 'error': str(e) }
-
-    # Ensure rule_json is a pretty string for the template
-    pretty_rule = json.dumps(rule_json, indent=2) if rule_json else None
-
+    # basic scheme metadata for template
     scheme_data = {
         'id': s.id,
         'title': s.title,
         'description': s.description,
         'source_url': s.source_url
     }
-    return render_template('scheme.html', scheme=scheme_data, snippet=snippet, rule_json=pretty_rule, confidence=confidence, evaluation=evaluation)
 
+    # snippet(s) and parser confidence — show first rule's snippet if present
+    snippet = None
+    rule_json = None
+    confidence = None
+    if rules:
+        r0 = rules[0]
+        snippet = getattr(r0, 'snippet', '') or ''
+        rule_json = r0.rule_json
+        confidence = getattr(r0, 'parser_confidence', None)
+
+    # Get the profile the user last submitted (from results page flow)
+    profile = session.get('profile')
+
+    # Build evaluation summary and details (per rule)
+    evaluation = None
+    evaluation_details = []
+    try:
+        if profile and rules:
+            # evaluate each rule with details
+            for r in rules:
+                rule_obj = r.rule_json
+                passed, score, details = evaluate_rule_with_details(rule_obj, profile)
+                # compute percent and label (same semantics as matcher)
+                score_pct = round(float(score) * 100.0, 2)
+                # detect failed atoms and skipped atoms
+                failed_any = any(d.get('status') is False for d in details)
+                skipped_any = any(d.get('skipped') for d in details)
+                if failed_any:
+                    label = 'Not Eligible'
+                elif score <= 0:
+                    label = 'Not Eligible'
+                elif score >= 1.0:
+                    label = 'Eligible' if not skipped_any else 'Maybe Eligible'
+                else:
+                    label = 'Maybe Eligible'
+
+                evaluation_details.append({
+                    'rule_id': getattr(r, 'id', None),
+                    'score': score_pct,
+                    'label': label,
+                    'parser_confidence': getattr(r, 'parser_confidence', None),
+                    'evaluations': details,
+                    'snippet': getattr(r, 'snippet', None)
+                })
+            # produce a short summary (best rule)
+            # pick best rule by score
+            best = max(evaluation_details, key=lambda x: x['score'])
+            evaluation = {
+                'label': best['label'],
+                'score': best['score'],
+                'parser_confidence': best.get('parser_confidence'),
+                'snippet': best.get('snippet'),
+                'rule_id': best.get('rule_id')
+            }
+        else:
+            # no profile or no rules
+            evaluation = None
+    except Exception as e:
+        evaluation = {'error': str(e)}
+
+    skipped_total = 0
+    try:
+        for det in evaluation_details:
+            for ev in det.get('evaluations', []):
+                # use .get('skipped') to be robust if key missing
+                if ev.get('skipped'):
+                    skipped_total += 1
+    except Exception:
+        # if anything goes wrong, default to 0 (don't break page)
+        skipped_total = 0
+
+    # pretty-rule JSON for display
+    pretty_rule = None
+    if rule_json:
+        try:
+            pretty_rule = json.dumps(rule_json, indent=2)
+        except:
+            pretty_rule = str(rule_json)
+
+    return render_template(
+        'scheme.html',
+        scheme=scheme_data,
+        snippet=snippet,
+        rule_json=pretty_rule,
+        confidence=confidence,
+        evaluation=evaluation,
+        evaluation_details=evaluation_details,
+        skipped_total=skipped_total   # <-- new variable passed to template
+    )
 
 # ---------------- Admin ----------------
 @app.route('/admin/login', methods=['GET','POST'])
@@ -201,8 +314,8 @@ def api_scheme(scheme_id):
     })
 
 
-# ---------------- Run ----------------
-if __name__ == '__main__':
+# ---------------- Run ----------------nif __name__ == '__main__':
     # optional: show SQL for debugging
     # app.config['SQLALCHEMY_ECHO'] = True
-    app.run(debug=True)
+
+app.run(debug=True)

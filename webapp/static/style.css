@@ -1,8 +1,217 @@
-body{ font-family: Arial, sans-serif; margin: 0; padding: 0; }
-.nav{ background:#333; color:#fff; padding:10px }
-.nav a{ color:#fff; margin-right:10px }
-.container{ padding:20px }
-table{ width:100%; border-collapse: collapse }
-td, th{ border:1px solid #ccc; padding:8px }
-.flashes{ list-style:none; padding:0; }
-.flashes li{ background:#ffeeaa; padding:8px; margin-bottom:8px }
+/* webapp/static/style.css
+   Modern minimal styling for the Gov Schemes demo
+*/
+
+/* ---------- Theme variables ---------- */
+:root{
+  --bg: #f6f8fb;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-2: #06b6d4;
+  --danger: #ef4444;
+  --success: #10b981;
+  --border: #e6e9ee;
+  --radius: 10px;
+  --max-width: 980px;
+
+  /* local logo image (change if needed) */
+  --logo-url: url('logo.jpg');
+}
+
+/* ---------- Page basics ---------- */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+  color:#111827;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  line-height:1.45;
+  padding-bottom:40px;
+}
+
+/* container */
+.container{
+  max-width:var(--max-width);
+  margin:28px auto;
+  padding:22px;
+  background:transparent;
+}
+
+/* ---------- Header / Nav ---------- */
+.nav{
+  background:var(--card);
+  border-bottom:1px solid var(--border);
+  padding:12px 18px;
+  display:flex;
+  gap:12px;
+  align-items:center;
+  box-shadow: 0 6px 20px rgba(16,24,40,0.04);
+  position:sticky;
+  top:0;
+  z-index:20;
+}
+.nav a{ color:var(--accent); text-decoration:none; font-weight:600 }
+.nav a:hover{ text-decoration:underline; opacity:0.95; }
+
+/* optional logo block on left of nav (uses uploaded image) */
+.nav::before{
+  content:'';
+  display:inline-block;
+  width:40px;
+  height:40px;
+  margin-right:12px;
+  background-image: var(--logo-url);
+  background-size:cover;
+  background-position:center;
+  border-radius:8px;
+  border:1px solid var(--border);
+}
+
+/* ---------- Card / sections ---------- */
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:18px;
+  margin-bottom:18px;
+  box-shadow: 0 8px 30px rgba(13,20,40,0.03);
+}
+
+/* headings */
+h1,h2,h3{ margin:0 0 12px 0; font-weight:700; color:#0f172a }
+h1{font-size:22px}
+h2{font-size:18px}
+h3{font-size:16px}
+
+/* small helper */
+.muted{ color:var(--muted); font-size:13px }
+
+/* ---------- Forms & inputs ---------- */
+form label{ display:block; margin-bottom:10px; color:#0f172a }
+input[type="text"], input[type="number"], input[type="password"],
+select, textarea {
+  width:100%;
+  padding:10px 12px;
+  border-radius:8px;
+  border:1px solid var(--border);
+  background: #fff;
+  outline:none;
+  font-size:15px;
+  transition: box-shadow .12s, border-color .12s;
+}
+input:focus, select:focus, textarea:focus {
+  box-shadow: 0 3px 12px rgba(37,99,235,0.12);
+  border-color: var(--accent);
+}
+
+/* short inline label layout for compact forms */
+.form-row{ display:flex; gap:12px; align-items:center; margin-bottom:10px; }
+.form-row > label{ flex:1; margin-bottom:0; }
+
+/* buttons */
+button{
+  background:var(--accent);
+  color:white;
+  padding:10px 14px;
+  border:none;
+  border-radius:8px;
+  font-weight:600;
+  cursor:pointer;
+  box-shadow: 0 6px 18px rgba(37,99,235,0.12);
+}
+button.secondary{
+  background:#fff;
+  color:var(--accent);
+  border:1px solid var(--border);
+  box-shadow:none;
+}
+button.danger{ background:var(--danger); box-shadow:none }
+
+/* link-style buttons */
+a.button-like{ display:inline-block; padding:8px 12px; background:var(--accent-2); color:#fff; border-radius:8px; text-decoration:none }
+
+/* ---------- Flash messages ---------- */
+.flashes{ list-style:none; padding:0; margin:0 0 12px 0; display:flex; gap:8px; flex-wrap:wrap }
+.flashes li{
+  background: #fff8e6;
+  border: 1px solid #ffebc2;
+  padding:8px 12px;
+  border-radius:8px;
+  color:#7a4a00;
+  font-weight:600;
+}
+
+/* ---------- Tables ---------- */
+table{
+  width:100%;
+  border-collapse:collapse;
+  background:transparent;
+}
+table thead tr th{
+  text-align:left;
+  padding:12px 10px;
+  font-size:13px;
+  color:var(--muted);
+  border-bottom:1px solid var(--border);
+}
+table tbody tr td{
+  padding:12px 10px;
+  border-bottom:1px dashed #f0f3f7;
+  vertical-align:middle;
+}
+table tbody tr:hover{ background: rgba(37,99,235,0.03) }
+
+/* badges */
+.badge{
+  display:inline-block;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:700;
+}
+.badge.ok{ background: rgba(16,185,129,0.12); color:var(--success); border:1px solid rgba(16,185,129,0.18) }
+.badge.warn{ background: rgba(234,179,8,0.08); color:#b45309; border:1px solid rgba(234,179,8,0.12) }
+.badge.muted{ background:#f3f4f6; color:var(--muted) }
+
+/* action column links */
+a { color:var(--accent) }
+a.small-link{ font-size:13px; color:var(--accent); text-decoration:none }
+
+/* ---------- Pre / code blocks ---------- */
+pre{
+  background:#0b1220;
+  color:#e6eef8;
+  padding:14px;
+  border-radius:8px;
+  overflow:auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+  font-size:13px;
+  line-height:1.45;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+/* textarea for JSON should look nicer */
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size:13px }
+
+/* ---------- Small screens ---------- */
+@media (max-width:720px){
+  .container{ padding:16px }
+  .nav{ padding:10px }
+  table thead{ display:none }
+  table tbody tr{ display:block; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; padding:10px }
+  table tbody tr td{ display:block; padding:6px 0 }
+  .form-row{ flex-direction:column; align-items:stretch }
+}
+
+/* ---------- Utilities ---------- */
+.kv{ display:flex; gap:12px; align-items:center; }
+.small{ font-size:13px; color:var(--muted) }
+.center{ text-align:center }
+
+/* neat footer spacing */
+footer{ margin-top:36px; color:var(--muted); font-size:13px; text-align:center }
