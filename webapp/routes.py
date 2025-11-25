@@ -5,7 +5,7 @@ import traceback
 from functools import wraps
 from flask import (
     request, jsonify, render_template, redirect, url_for,
-    abort, current_app
+    abort, current_app, session
 )
 
 from app import app
@@ -136,10 +136,23 @@ def api_match():
         if not profile or not isinstance(profile, dict):
             return jsonify({"error": "Profile JSON required"}), 400
 
-        # Save user profile
-        user = UserProfile(profile=profile)
-        db.session.add(user)
-        db.session.commit()
+        # Save user profile. If a user is logged in, attach profile to that user.
+        user = None
+        if session.get('user_id'):
+            try:
+                user = UserProfile.query.get(session.get('user_id'))
+            except Exception:
+                user = None
+        if user:
+            user.profile = profile
+            db.session.add(user)
+            db.session.commit()
+        else:
+            user = UserProfile(profile=profile)
+            db.session.add(user)
+            db.session.commit()
+            # store anonymous user id in session so subsequent calls can be linked
+            session['user_id'] = user.id
 
         # Call matcher
         results = []

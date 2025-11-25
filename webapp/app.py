@@ -1,10 +1,10 @@
 # webapp/app.py
-# Uploaded image path (for your reference): /mnt/data/8fa00f43-dcce-414e-a4ae-6ad9bdb10409.png
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 import json
 import os
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
@@ -24,25 +24,26 @@ app.secret_key = os.getenv("FLASK_SECRET", "dev-secret-for-demo")
 # Initialize DB (Postgres) via SQLAlchemy and ensure sample data
 init_db(app)
 with app.app_context():
+    # If the database tables are new or were dropped, this will populate them.
     ensure_sample_data()
 
 INDIAN_STATES_AND_UT = [
-  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
-  "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
-  "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
-  "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
-  "Uttar Pradesh","Uttarakhand","West Bengal",
-  "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
-  "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
+    "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
+    "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
+    "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
+    "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
+    "Uttar Pradesh","Uttarakhand","West Bengal",
+    "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
+    "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
 ]
 
 CASTE_CATEGORIES = [
-  "General/Unreserved",
-  "Other Backward Classes (OBC)",
-  "Scheduled Caste (SC)",
-  "Scheduled Tribe (ST)",
-  "Economically Weaker Section (EWS)",
-  "Other / Prefer not to say"
+    "General/Unreserved",
+    "Other Backward Classes (OBC)",
+    "Scheduled Caste (SC)",
+    "Scheduled Tribe (ST)",
+    "Economically Weaker Section (EWS)",
+    "Other / Prefer not to say"
 ]
 
 # ---------------- Public routes ----------------
@@ -58,7 +59,7 @@ def _to_int_or_none(v):
         if v is None or v == '':
             return None
         return int(v)
-    except Exception:
+    except ValueError: # Changed to catch specific ValueError
         return None
 
 
@@ -67,7 +68,7 @@ def _to_float_or_none(v):
         if v is None or v == '':
             return None
         return float(v)
-    except Exception:
+    except ValueError: # Changed to catch specific ValueError
         return None
 
 
@@ -103,6 +104,62 @@ def results():
     results = session.get('last_results', [])
     profile = session.get('profile', {})
     return render_template('results.html', results=results, profile=profile)
+
+
+# ---------------- User auth (signup/login/logout) ----------------
+@app.route('/signup', methods=['GET','POST'])
+def signup():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        email = request.form.get('email')
+        phone = request.form.get('phone')
+        password = request.form.get('password')
+        if not email or not password:
+            flash('Email and password are required')
+            return redirect(url_for('signup'))
+
+        # check if user exists
+        existing = UserProfile.query.filter_by(email=email).first()
+        if existing:
+            flash('An account with that email already exists')
+            return redirect(url_for('signup'))
+
+        pw_hash = generate_password_hash(password)
+        user = UserProfile(email=email, password_hash=pw_hash, name=name, phone=phone, profile={})
+        db.session.add(user)
+        db.session.commit()
+        session['user_id'] = user.id
+        flash('Account created and logged in')
+        return redirect(url_for('index'))
+    return render_template('signup.html')
+
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        if not email or not password:
+            flash('Email and password required')
+            return redirect(url_for('login'))
+        user = UserProfile.query.filter_by(email=email).first()
+        if not user or not user.password_hash:
+            flash('Invalid credentials')
+            return redirect(url_for('login'))
+        if not check_password_hash(user.password_hash, password):
+            flash('Invalid credentials')
+            return redirect(url_for('login'))
+        session['user_id'] = user.id
+        flash('Logged in')
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    flash('Logged out')
+    return redirect(url_for('index'))
 
 
 @app.route('/scheme/<int:scheme_id>')
@@ -209,7 +266,7 @@ def scheme_detail(scheme_id):
         confidence=confidence,
         evaluation=evaluation,
         evaluation_details=evaluation_details,
-        skipped_total=skipped_total   # <-- new variable passed to template
+        skipped_total=skipped_total    # <-- new variable passed to template
     )
 
 # ---------------- Admin ----------------
@@ -291,6 +348,7 @@ def admin_verify(scheme_id):
 def stats_schemes_by_state():
     try:
         from sqlalchemy import func
+        # This now relies on the added Scheme.state column in models.py
         rows = db.session.query(Scheme.state, func.count(Scheme.id)).group_by(Scheme.state).all()
         return jsonify([{ 'state': r[0] or 'Unknown', 'count': r[1]} for r in rows])
     except Exception as e:

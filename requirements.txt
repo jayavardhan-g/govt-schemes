@@ -3,3 +3,4 @@ flask
 dotenv
 flask_sqlalchemy
 psycopg2
+alembic

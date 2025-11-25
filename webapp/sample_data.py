@@ -1,4 +1,5 @@
 # webapp/sample_data.py
+
 import json
 from db import db
 from models import Scheme, SchemeRule
@@ -46,7 +47,8 @@ def ensure_sample_data():
 
     # insert schemes
     for s in SAMPLE_SCHEMES:
-        scheme = Scheme(title=s['title'], description=s['description'], source_url=s['source_url'])
+        # FIX: Ensure state is explicitly passed
+        scheme = Scheme(title=s['title'], description=s['description'], state=s['state'], source_url=s['source_url']) 
         db.session.add(scheme)
     db.session.commit()
 
