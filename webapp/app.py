@@ -3,16 +3,19 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 import json
 import os
+import traceback
+from functools import wraps
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
 
 load_dotenv()
 
 # SQLAlchemy init
 from db import init_db, db
-# sample_data now uses SQLAlchemy
+# sample_data uses SQLAlchemy
 from sample_data import ensure_sample_data
-# matcher uses SQLAlchemy (evaluate_rules_for_profile(profile) and evaluate_rule(rule, profile))
+# matcher uses SQLAlchemy
 from matcher import evaluate_rules_for_profile, evaluate_rule, evaluate_rule_with_details
 
 # ORM models
@@ -46,74 +49,110 @@ CASTE_CATEGORIES = [
     "Other / Prefer not to say"
 ]
 
-# ---------------- Public routes ----------------
-@app.route('/')
-def index():
-    return render_template('index.html',states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
-
-
 # ---------------- Helpers ----------------
 
 def _to_int_or_none(v):
     try:
-        if v is None or v == '':
-            return None
+        if v is None or v == '': return None
         return int(v)
-    except ValueError: # Changed to catch specific ValueError
-        return None
-
+    except ValueError: return None
 
 def _to_float_or_none(v):
     try:
-        if v is None or v == '':
-            return None
+        if v is None or v == '': return None
         return float(v)
-    except ValueError: # Changed to catch specific ValueError
-        return None
+    except ValueError: return None
 
-
-@app.route('/match', methods=['POST'])
-def match():
-    # Build profile from form fields — preserve None for missing inputs (do not coerce to 0)
-    profile = {
-        'age': _to_int_or_none(request.form.get('age')),
-        'income': _to_float_or_none(request.form.get('income')),
-        'gender': (request.form.get('gender') or None),
-        'state': (request.form.get('state') or None),
-        'occupation': (request.form.get('occupation') or None),
-        'caste': (request.form.get('caste') or None),
-        'disability': (request.form.get('disability') or None),
-        'household_size': _to_int_or_none(request.form.get('household_size')) or 1
+def extract_profile_from_form(req_form):
+    return {
+        'age': _to_int_or_none(req_form.get('age')),
+        'income': _to_float_or_none(req_form.get('income')),
+        'gender': (req_form.get('gender') or None),
+        'state': (req_form.get('state') or None),
+        'occupation': (req_form.get('occupation') or None),
+        'caste': (req_form.get('caste') or None),
+        'disability': (req_form.get('disability') or None),
+        'household_size': _to_int_or_none(req_form.get('household_size')) or 1
     }
 
-    # call matcher which now expects (profile) and returns list of dicts
-    try:
-        results = evaluate_rules_for_profile(profile)
-    except TypeError:
-        # fallback if matcher signature is different
-        results = evaluate_rules_for_profile(profile)
+# ---------------- Routes ----------------
 
-    # store in session briefly to show results page
-    session['last_results'] = results
-    session['profile'] = profile
-    return redirect(url_for('results'))
+@app.route('/')
+def index():
+    # 1. Check if "Check for another person" was clicked (Manual Mode)
+    if request.args.get('mode') == 'manual':
+        return render_template('index.html', 
+                               states=INDIAN_STATES_AND_UT, 
+                               castes=CASTE_CATEGORIES,
+                               manual_mode=True)
+
+    user_id = session.get('user_id')
+    
+    # 2. Logged-in User Logic
+    if user_id:
+        user = UserProfile.query.get(user_id)
+        
+        if user and user.profile:
+            # Sync the session profile with the DB profile so Details page matches Homepage
+            session['profile'] = user.profile 
+
+            results = evaluate_rules_for_profile(user.profile)
+            return render_template('results.html', 
+                                   results=results, 
+                                   profile=user.profile, 
+                                   is_dashboard=True)
+        else:
+            flash("Welcome! Please complete your profile to see eligible schemes.")
+            return redirect(url_for('profile'))
+
+    # 3. Guest User (Standard Form)
+    return render_template('index.html', states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
 
 
 @app.route('/results')
 def results():
+    # Retrieve data stored in session by the /match route
     results = session.get('last_results', [])
     profile = session.get('profile', {})
     return render_template('results.html', results=results, profile=profile)
 
 
-# ---------------- User auth (signup/login/logout) ----------------
+@app.route('/profile', methods=['GET', 'POST'])
+def profile():
+    # 1. Check if session has a user_id
+    if not session.get('user_id'):
+        flash('Please login to edit your profile')
+        return redirect(url_for('login'))
+    
+    user = UserProfile.query.get(session['user_id'])
+    
+    # Handle "Ghost" Sessions (if DB was reset but session remains)
+    if user is None:
+        session.pop('user_id', None)
+        flash('Session expired or invalid. Please login again.')
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        new_profile_data = extract_profile_from_form(request.form)
+        user.profile = new_profile_data
+        db.session.commit()
+        flash('Profile updated successfully!')
+        return redirect(url_for('index'))
+        
+    return render_template('profile.html', 
+                           user=user, 
+                           states=INDIAN_STATES_AND_UT, 
+                           castes=CASTE_CATEGORIES)
+
+
 @app.route('/signup', methods=['GET','POST'])
 def signup():
     if request.method == 'POST':
         name = request.form.get('name')
         email = request.form.get('email')
-        phone = request.form.get('phone')
         password = request.form.get('password')
+        phone = request.form.get('phone')
+
         if not email or not password:
             flash('Email and password are required')
             return redirect(url_for('signup'))
@@ -124,13 +163,17 @@ def signup():
             flash('An account with that email already exists')
             return redirect(url_for('signup'))
 
+        # Create user
         pw_hash = generate_password_hash(password)
         user = UserProfile(email=email, password_hash=pw_hash, name=name, phone=phone, profile={})
         db.session.add(user)
         db.session.commit()
+        
         session['user_id'] = user.id
-        flash('Account created and logged in')
-        return redirect(url_for('index'))
+        
+        flash('Account created! Please fill in your details to get started.')
+        return redirect(url_for('profile'))
+        
     return render_template('signup.html')
 
 
@@ -162,16 +205,38 @@ def logout():
     return redirect(url_for('index'))
 
 
+@app.route('/match', methods=['POST'])
+def match():
+    profile = extract_profile_from_form(request.form)
+
+    # Logic: Only save to DB if user is logged in AND it's not a temporary manual check
+    is_manual_check = request.form.get('is_manual_check') == '1'
+
+    if session.get('user_id') and not is_manual_check:
+        user = UserProfile.query.get(session['user_id'])
+        if user:
+            user.profile = profile
+            db.session.commit()
+
+    try:
+        results = evaluate_rules_for_profile(profile)
+    except TypeError:
+        # Fallback if signature mismatch
+        results = evaluate_rules_for_profile(profile)
+
+    session['last_results'] = results
+    session['profile'] = profile
+    return redirect(url_for('results'))
+
+
 @app.route('/scheme/<int:scheme_id>')
 def scheme_detail(scheme_id):
     s = Scheme.query.get(scheme_id)
     if not s:
         return 'Scheme not found', 404
 
-    # fetch rule rows (could be 0..N)
     rules = SchemeRule.query.filter_by(scheme_id=scheme_id).all()
 
-    # basic scheme metadata for template
     scheme_data = {
         'id': s.id,
         'title': s.title,
@@ -179,7 +244,6 @@ def scheme_detail(scheme_id):
         'source_url': s.source_url
     }
 
-    # snippet(s) and parser confidence — show first rule's snippet if present
     snippet = None
     rule_json = None
     confidence = None
@@ -189,23 +253,21 @@ def scheme_detail(scheme_id):
         rule_json = r0.rule_json
         confidence = getattr(r0, 'parser_confidence', None)
 
-    # Get the profile the user last submitted (from results page flow)
+    # Get the profile from session (synced in index/match)
     profile = session.get('profile')
 
-    # Build evaluation summary and details (per rule)
     evaluation = None
     evaluation_details = []
     try:
         if profile and rules:
-            # evaluate each rule with details
             for r in rules:
                 rule_obj = r.rule_json
                 passed, score, details = evaluate_rule_with_details(rule_obj, profile)
-                # compute percent and label (same semantics as matcher)
                 score_pct = round(float(score) * 100.0, 2)
-                # detect failed atoms and skipped atoms
+                
                 failed_any = any(d.get('status') is False for d in details)
                 skipped_any = any(d.get('skipped') for d in details)
+                
                 if failed_any:
                     label = 'Not Eligible'
                 elif score <= 0:
@@ -223,8 +285,7 @@ def scheme_detail(scheme_id):
                     'evaluations': details,
                     'snippet': getattr(r, 'snippet', None)
                 })
-            # produce a short summary (best rule)
-            # pick best rule by score
+            
             best = max(evaluation_details, key=lambda x: x['score'])
             evaluation = {
                 'label': best['label'],
@@ -234,7 +295,6 @@ def scheme_detail(scheme_id):
                 'rule_id': best.get('rule_id')
             }
         else:
-            # no profile or no rules
             evaluation = None
     except Exception as e:
         evaluation = {'error': str(e)}
@@ -243,14 +303,11 @@ def scheme_detail(scheme_id):
     try:
         for det in evaluation_details:
             for ev in det.get('evaluations', []):
-                # use .get('skipped') to be robust if key missing
                 if ev.get('skipped'):
                     skipped_total += 1
     except Exception:
-        # if anything goes wrong, default to 0 (don't break page)
         skipped_total = 0
 
-    # pretty-rule JSON for display
     pretty_rule = None
     if rule_json:
         try:
@@ -266,16 +323,16 @@ def scheme_detail(scheme_id):
         confidence=confidence,
         evaluation=evaluation,
         evaluation_details=evaluation_details,
-        skipped_total=skipped_total    # <-- new variable passed to template
+        skipped_total=skipped_total
     )
 
 # ---------------- Admin ----------------
+
 @app.route('/admin/login', methods=['GET','POST'])
 def admin_login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        # simple check; consider env vars or real auth in production
         if username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "password"):
             session['admin'] = True
             return redirect(url_for('admin_dashboard'))
@@ -293,7 +350,6 @@ def admin_dashboard():
     if not session.get('admin'):
         return redirect(url_for('admin_login'))
 
-    # Left join Scheme -> SchemeRule using ORM
     rows = db.session.query(Scheme, SchemeRule).outerjoin(SchemeRule, Scheme.id==SchemeRule.scheme_id).all()
     schemes = []
     for scheme, rule in rows:
@@ -318,7 +374,6 @@ def admin_verify(scheme_id):
         rule_json = request.form.get('rule_json')
         snippet = request.form.get('snippet')
         try:
-            # Validate JSON; convert to python dict
             parsed = json.loads(rule_json)
         except Exception as e:
             flash('Invalid JSON: ' + str(e))
@@ -342,13 +397,11 @@ def admin_verify(scheme_id):
         snippet = r.snippet if r else 'No snippet available (dummy data)'
         return render_template('admin_verify.html', scheme={'id': s.id, 'title': s.title}, rule_json=rule_json, snippet=snippet)
 
-
 # ---------------- Analytics APIs ----------------
 @app.route('/api/stats/schemes_by_state')
 def stats_schemes_by_state():
     try:
         from sqlalchemy import func
-        # This now relies on the added Scheme.state column in models.py
         rows = db.session.query(Scheme.state, func.count(Scheme.id)).group_by(Scheme.state).all()
         return jsonify([{ 'state': r[0] or 'Unknown', 'count': r[1]} for r in rows])
     except Exception as e:
@@ -371,9 +424,8 @@ def api_scheme(scheme_id):
         'confidence': r.parser_confidence if r else None
     })
 
-
-# ---------------- Run ----------------nif __name__ == '__main__':
+# ---------------- Run ----------------
+if __name__ == '__main__':
     # optional: show SQL for debugging
     # app.config['SQLALCHEMY_ECHO'] = True
-
-app.run(debug=True)
+    app.run(debug=True)

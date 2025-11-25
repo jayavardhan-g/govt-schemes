@@ -1,15 +1,22 @@
-<!-- results.html -->
 {% extends 'base.html' %}
 {% block body %}
 
-<div style="display:flex; justify-content:space-between; align-items:center;">
-  <h1>Results</h1>
-  {% if session.get('user_id') %}
-    <a href="/profile" class="btn small" style="background:#6c757d;">Edit My Profile</a>
-  {% else %}
-    <a href="/" class="btn small" style="background:#6c757d;">Edit Inputs</a>
-  {% endif %}
+{% if is_dashboard %}
+<div class="dashboard-header">
+  <div class="welcome-msg">
+    <h2>Recommended for you</h2>
+    <p class="muted">Based on your saved profile.</p>
+  </div>
+  <div class="dashboard-actions">
+    <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
+    <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
+  </div>
 </div>
+<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+{% else %}
+  <h1>Results</h1>
+{% endif %}
+
 <div class="controls" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
   <div>
     <label for="filterStatus">Filter:</label>
@@ -68,13 +75,31 @@
           <a href="/scheme/{{ r.scheme_id }}" class="btn small">View</a>
         </td>
       </tr>
+    {% else %}
+      <tr>
+        <td colspan="4" style="padding:20px; text-align:center; color:#666;">
+          No schemes found matching your profile yet. <br>
+          <em>(Try updating your profile with more details like Occupation or State)</em>
+        </td>
+      </tr>
     {% endfor %}
   </tbody>
 </table>
 
-<!-- optional debug screenshot link (local path) -->
-
 <style>
+.dashboard-header {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;
+}
+.welcome-msg h2 { margin: 0 0 5px 0; font-size: 1.5rem; }
+.dashboard-actions { display: flex; gap: 10px; }
+.btn-outline { 
+  background: white; border: 1px solid #007bff; color: #007bff; 
+  padding: 8px 12px; border-radius: 6px; text-decoration: none; font-weight: 600;
+}
+.btn-outline:hover { background: #f0f7ff; }
+
+/* Existing Table Styles */
 .btn { background:#007bff; color:#fff; padding:6px 10px; border-radius:6px; text-decoration:none; border:none; cursor:pointer; }
 .btn.small { padding:6px 8px; font-size:0.9rem; }
 .badge { color:#fff; padding:4px 8px; border-radius:6px; font-weight:700; display:inline-block; }
@@ -82,8 +107,6 @@
 .progress-bg { width:160px; height:12px; background:#f1f1f1; border-radius:8px; overflow:hidden; }
 .progress-fill { height:12px; width:0%; transition:width .4s ease; }
 .progress-text { min-width:48px; font-weight:600; color:#222; }
-  
-/* color match for fill based on status: we'll use CSS variable set by JS */
 .progress-fill.green { background:linear-gradient(90deg,#6bc16b,#2fa84f); }
 .progress-fill.yellow { background:linear-gradient(90deg,#f7c76b,#f0ad4e); }
 .progress-fill.red { background:linear-gradient(90deg,#f18a8a,#d9534f); }
@@ -99,23 +122,19 @@
   const filterStatus = document.getElementById('filterStatus');
   const searchBox = document.getElementById('searchBox');
 
-  // initial render: color progress fills according to status
   function colorizeRows() {
     document.querySelectorAll('.result-row').forEach(row => {
       const score = parseFloat(row.dataset.score) || 0;
       const status = row.dataset.status || '';
       const fill = row.querySelector('.progress-fill');
-      // remove any class then add based on status
       fill.classList.remove('green','yellow','red');
       if (status === 'Eligible') fill.classList.add('green');
       else if (status === 'Maybe Eligible') fill.classList.add('yellow');
       else fill.classList.add('red');
-      // set width per score
       fill.style.width = Math.max(0, Math.min(100, score)) + '%';
     });
   }
 
-  // sorting: by data-score numeric
   let sortDesc = true;
   function sortRows() {
     const rows = Array.from(tbody.querySelectorAll('.result-row'));
@@ -124,11 +143,9 @@
       const sb = parseFloat(b.dataset.score) || 0;
       return sortDesc ? (sb - sa) : (sa - sb);
     });
-    // re-append in order
     rows.forEach(r => tbody.appendChild(r));
   }
 
-  // filter & search
   function applyFilters() {
     const statusFilter = filterStatus.value;
     const q = (searchBox.value || '').trim().toLowerCase();
@@ -142,7 +159,6 @@
     });
   }
 
-  // UI hooks
   sortBtn.addEventListener('click', () => {
     sortDesc = !sortDesc;
     sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc';
@@ -152,7 +168,6 @@
   filterStatus.addEventListener('change', applyFilters);
   searchBox.addEventListener('input', applyFilters);
 
-  // initial
   colorizeRows();
   sortRows();
 })();

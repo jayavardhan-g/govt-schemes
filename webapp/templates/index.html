@@ -1,8 +1,20 @@
-<!-- index.html -->
 {% extends 'base.html' %}
 {% block body %}
-<h1>Check Scheme Eligibility (Demo)</h1>
+
+{% if manual_mode %}
+<div style="background: #e2e3e5; padding: 10px; border-radius: 6px; margin-bottom: 20px; color: #383d41;">
+    <strong>Guest Mode:</strong> You are checking eligibility for another person. 
+    <a href="/">Return to my dashboard</a>
+</div>
+{% endif %}
+
+<h1>Check Scheme Eligibility</h1>
 <form action="/match" method="post">
+  
+  {% if manual_mode %}
+    <input type="hidden" name="is_manual_check" value="1">
+  {% endif %}
+
   <label>Age: <input type="number" name="age" required></label><br>
 
   <label>Income (annual): <input type="number" name="income" required></label><br>
@@ -12,10 +24,10 @@
       <option value="">--</option>
       <option value="male">Male</option>
       <option value="female">Female</option>
+      <option value="other">Other</option>
     </select>
   </label><br>
 
-  <!-- STATE: replace text input with select populated from `states` -->
   <label>State:
     <select name="state" id="stateSelect">
       <option value="">-- Select state/UT --</option>
@@ -29,7 +41,6 @@
 
   <label>Occupation: <input type="text" name="occupation"></label><br>
 
-  <!-- CASTE: replace text input with select populated from `castes` -->
   <label>Caste/Category:
     <select name="caste" id="casteSelect">
       <option value="">-- Select caste/category --</option>
@@ -49,7 +60,8 @@
   </label><br>
 
   <label>Household size: <input type="number" name="household_size" value="1"></label><br>
-  <button type="submit">Check</button>
+  
+  <button type="submit">Check Eligibility</button>
 </form>
 
 <script>
@@ -74,6 +86,7 @@ const fallbackCastes = [
 
 (function ensureSelects() {
   const stateSelect = document.getElementById('stateSelect');
+  // Only add fallbacks if Python didn't populate them (length <= 1 means only the default option exists)
   if (stateSelect && stateSelect.options.length <= 1) {
     fallbackStates.forEach(s => {
       const o = document.createElement('option'); o.value = s; o.text = s; stateSelect.add(o);

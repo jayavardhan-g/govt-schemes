@@ -46,94 +46,175 @@ CASTE_CATEGORIES = [
     "Other / Prefer not to say"
 ]
 
-# ---------------- Public routes ----------------
-@app.route('/')
-def index():
-    return render_template('index.html',states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
+# webapp/app.py
 
+# ... existing imports ...
 
 # ---------------- Helpers ----------------
 
+def extract_profile_from_form(req_form):
+    return {
+        'age': _to_int_or_none(req_form.get('age')),
+        'income': _to_float_or_none(req_form.get('income')),
+        'gender': (req_form.get('gender') or None),
+        'state': (req_form.get('state') or None),
+        'occupation': (req_form.get('occupation') or None),
+        'caste': (req_form.get('caste') or None),
+        'disability': (req_form.get('disability') or None),
+        'household_size': _to_int_or_none(req_form.get('household_size')) or 1
+    }
+
 def _to_int_or_none(v):
     try:
-        if v is None or v == '':
-            return None
+        if v is None or v == '': return None
         return int(v)
-    except ValueError: # Changed to catch specific ValueError
-        return None
-
+    except ValueError: return None
 
 def _to_float_or_none(v):
     try:
-        if v is None or v == '':
-            return None
+        if v is None or v == '': return None
         return float(v)
-    except ValueError: # Changed to catch specific ValueError
-        return None
+    except ValueError: return None
+
+# NEW HELPER: Extract profile to avoid code duplication
+def extract_profile_from_form(req_form):
+    return {
+        'age': _to_int_or_none(req_form.get('age')),
+        'income': _to_float_or_none(req_form.get('income')),
+        'gender': (req_form.get('gender') or None),
+        'state': (req_form.get('state') or None),
+        'occupation': (req_form.get('occupation') or None),
+        'caste': (req_form.get('caste') or None),
+        'disability': (req_form.get('disability') or None),
+        'household_size': _to_int_or_none(req_form.get('household_size')) or 1
+    }
+
+# ---------------- Routes ----------------
+
+# webapp/app.py
+
+# ... (imports and init remain the same) ...
+
+# ---------------- Routes ----------------
+
+@app.route('/')
+def index():
+    # 1. Check if "Check for another person" was clicked (Manual Mode)
+    if request.args.get('mode') == 'manual':
+        return render_template('index.html', 
+                               states=INDIAN_STATES_AND_UT, 
+                               castes=CASTE_CATEGORIES,
+                               manual_mode=True) # Flag to tell template not to auto-save
+
+    user_id = session.get('user_id')
+    
+    # 2. Logged-in User Logic
+    if user_id:
+        user = UserProfile.query.get(user_id)
+        
+        # If user has a profile, show results immediately (Dashboard view)
+        if user and user.profile:
+            results = evaluate_rules_for_profile(user.profile)
+            return render_template('results.html', 
+                                   results=results, 
+                                   profile=user.profile, 
+                                   is_dashboard=True) # Flag to show specific dashboard buttons
+        
+        # If user is logged in but has NO profile, force them to create one
+        else:
+            flash("Welcome! Please complete your profile to see eligible schemes.")
+            return redirect(url_for('profile'))
+
+    # 3. Guest User (Standard Form)
+    return render_template('index.html', states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
+
+@app.route('/results')
+def results():
+    # Retrieve data stored in session by the /match route
+    results = session.get('last_results', [])
+    profile = session.get('profile', {})
+    
+    # Render the results page
+    return render_template('results.html', results=results, profile=profile)
+
+@app.route('/profile', methods=['GET', 'POST'])
+def profile():
+    # 1. Protect the route: User must be logged in
+    if not session.get('user_id'):
+        flash('Please login to edit your profile')
+        return redirect(url_for('login'))
+    
+    user = UserProfile.query.get(session['user_id'])
+    
+    # 2. Handle Form Submission (POST)
+    if request.method == 'POST':
+        # Extract data from the form
+        new_profile_data = extract_profile_from_form(request.form)
+        
+        # Update the database
+        user.profile = new_profile_data
+        db.session.commit()
+        
+        flash('Profile updated successfully!')
+        # Redirect to home (which will now show the dashboard)
+        return redirect(url_for('index'))
+        
+    # 3. Handle Page Load (GET): Show form pre-filled
+    # We pass states and castes so the dropdowns work
+    return render_template('profile.html', 
+                           user=user, 
+                           states=INDIAN_STATES_AND_UT, 
+                           castes=CASTE_CATEGORIES)
+
+@app.route('/signup', methods=['GET','POST'])
+def signup():
+    if request.method == 'POST':
+        # ... (Existing extraction logic) ...
+        name = request.form.get('name')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        # ... (Existing validation logic) ...
+
+        # Create user
+        pw_hash = generate_password_hash(password)
+        user = UserProfile(email=email, password_hash=pw_hash, name=name, profile={})
+        db.session.add(user)
+        db.session.commit()
+        
+        session['user_id'] = user.id
+        
+        # CHANGED: Redirect to Profile creation instead of Index
+        flash('Account created! Please fill in your details to get started.')
+        return redirect(url_for('profile'))
+        
+    return render_template('signup.html')
 
 
 @app.route('/match', methods=['POST'])
 def match():
-    # Build profile from form fields — preserve None for missing inputs (do not coerce to 0)
-    profile = {
-        'age': _to_int_or_none(request.form.get('age')),
-        'income': _to_float_or_none(request.form.get('income')),
-        'gender': (request.form.get('gender') or None),
-        'state': (request.form.get('state') or None),
-        'occupation': (request.form.get('occupation') or None),
-        'caste': (request.form.get('caste') or None),
-        'disability': (request.form.get('disability') or None),
-        'household_size': _to_int_or_none(request.form.get('household_size')) or 1
-    }
+    profile = extract_profile_from_form(request.form)
 
-    # call matcher which now expects (profile) and returns list of dicts
+    # Logic: Only save to DB if user is logged in AND it's not a temporary manual check
+    # We check for a hidden form field 'prevent_save' or query arg
+    is_manual_check = request.form.get('is_manual_check') == '1'
+
+    if session.get('user_id') and not is_manual_check:
+        user = UserProfile.query.get(session['user_id'])
+        if user:
+            user.profile = profile
+            db.session.commit()
+
     try:
         results = evaluate_rules_for_profile(profile)
     except TypeError:
-        # fallback if matcher signature is different
         results = evaluate_rules_for_profile(profile)
 
-    # store in session briefly to show results page
     session['last_results'] = results
     session['profile'] = profile
     return redirect(url_for('results'))
 
-
-@app.route('/results')
-def results():
-    results = session.get('last_results', [])
-    profile = session.get('profile', {})
-    return render_template('results.html', results=results, profile=profile)
-
-
-# ---------------- User auth (signup/login/logout) ----------------
-@app.route('/signup', methods=['GET','POST'])
-def signup():
-    if request.method == 'POST':
-        name = request.form.get('name')
-        email = request.form.get('email')
-        phone = request.form.get('phone')
-        password = request.form.get('password')
-        if not email or not password:
-            flash('Email and password are required')
-            return redirect(url_for('signup'))
-
-        # check if user exists
-        existing = UserProfile.query.filter_by(email=email).first()
-        if existing:
-            flash('An account with that email already exists')
-            return redirect(url_for('signup'))
-
-        pw_hash = generate_password_hash(password)
-        user = UserProfile(email=email, password_hash=pw_hash, name=name, phone=phone, profile={})
-        db.session.add(user)
-        db.session.commit()
-        session['user_id'] = user.id
-        flash('Account created and logged in')
-        return redirect(url_for('index'))
-    return render_template('signup.html')
-
-
+# ... (rest of the routes like /profile, /login remain as defined in previous step) ...
 @app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
