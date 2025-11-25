@@ -1,3 +1,4 @@
+<!-- base.html -->
 <!doctype html>
 <html>
 <head>
@@ -11,6 +12,7 @@
   <a href="/">Home</a> |
   <a href="/admin">Admin</a>
   {% if session.get('user_id') %} |
+    <a href="/profile">My Profile</a> |
     <a href="/logout">Logout</a>
   {% else %} |
     <a href="/signup">Sign Up</a> |

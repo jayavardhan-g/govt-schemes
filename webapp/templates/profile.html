@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block body %}
+<h1>Update Your Profile</h1>
+<p class="muted">Update your details below to get automatic scheme recommendations on the homepage.</p>
+
+<form action="/profile" method="post" style="max-width:500px; margin-top:20px;">
+  
+  <label>Age: 
+    <input type="number" name="age" value="{{ user.profile.get('age') or '' }}" required>
+  </label><br>
+
+  <label>Income (annual): 
+    <input type="number" name="income" value="{{ user.profile.get('income') or '' }}" required>
+  </label><br>
+
+  <label>Gender:
+    <select name="gender">
+      <option value="">--</option>
+      <option value="male" {% if user.profile.get('gender') == 'male' %}selected{% endif %}>Male</option>
+      <option value="female" {% if user.profile.get('gender') == 'female' %}selected{% endif %}>Female</option>
+      <option value="other" {% if user.profile.get('gender') == 'other' %}selected{% endif %}>Other</option>
+    </select>
+  </label><br>
+
+  <label>State:
+    <select name="state">
+      <option value="">-- Select state/UT --</option>
+      {% for s in states %}
+        <option value="{{ s }}" {% if user.profile.get('state') == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label><br>
+
+  <label>Occupation: 
+    <input type="text" name="occupation" value="{{ user.profile.get('occupation') or '' }}">
+  </label><br>
+
+  <label>Caste/Category:
+    <select name="caste">
+      <option value="">-- Select caste/category --</option>
+      {% for c in castes %}
+        <option value="{{ c }}" {% if user.profile.get('caste') == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </label><br>
+
+  <label>Disability:
+    <select name="disability">
+      <option value="no" {% if user.profile.get('disability') == 'no' %}selected{% endif %}>No</option>
+      <option value="yes" {% if user.profile.get('disability') == 'yes' %}selected{% endif %}>Yes</option>
+    </select>
+  </label><br>
+
+  <label>Household size: 
+    <input type="number" name="household_size" value="{{ user.profile.get('household_size') or 1 }}">
+  </label><br>
+  
+  <div style="margin-top:15px;">
+      <button type="submit" class="btn">Save & View Matches</button>
+      <a href="/" style="margin-left:10px;">Cancel</a>
+  </div>
+</form>
+
+<style>
+  label { display:block; margin-bottom:10px; font-weight:600; }
+  input, select { padding: 5px; width: 100%; max-width: 300px; }
+  .btn { background:#007bff; color:#fff; padding:8px 12px; border-radius:6px; border:none; cursor:pointer; }
+</style>
+{% endblock %}

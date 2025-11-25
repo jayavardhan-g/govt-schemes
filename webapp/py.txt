@@ -1,0 +1,1078 @@
+# webapp/app.py
+
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+import json
+import os
+from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
+
+load_dotenv()
+
+# SQLAlchemy init
+from db import init_db, db
+# sample_data now uses SQLAlchemy
+from sample_data import ensure_sample_data
+# matcher uses SQLAlchemy (evaluate_rules_for_profile(profile) and evaluate_rule(rule, profile))
+from matcher import evaluate_rules_for_profile, evaluate_rule, evaluate_rule_with_details
+
+# ORM models
+from models import Scheme, SchemeRule, UserProfile, MatchResult
+
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET", "dev-secret-for-demo")
+
+# Initialize DB (Postgres) via SQLAlchemy and ensure sample data
+init_db(app)
+with app.app_context():
+    # If the database tables are new or were dropped, this will populate them.
+    ensure_sample_data()
+
+INDIAN_STATES_AND_UT = [
+    "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
+    "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
+    "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
+    "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
+    "Uttar Pradesh","Uttarakhand","West Bengal",
+    "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
+    "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
+]
+
+CASTE_CATEGORIES = [
+    "General/Unreserved",
+    "Other Backward Classes (OBC)",
+    "Scheduled Caste (SC)",
+    "Scheduled Tribe (ST)",
+    "Economically Weaker Section (EWS)",
+    "Other / Prefer not to say"
+]
+
+# ---------------- Public routes ----------------
+@app.route('/')
+def index():
+    return render_template('index.html',states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
+
+
+# ---------------- Helpers ----------------
+
+def _to_int_or_none(v):
+    try:
+        if v is None or v == '':
+            return None
+        return int(v)
+    except ValueError: # Changed to catch specific ValueError
+        return None
+
+
+def _to_float_or_none(v):
+    try:
+        if v is None or v == '':
+            return None
+        return float(v)
+    except ValueError: # Changed to catch specific ValueError
+        return None
+
+
+@app.route('/match', methods=['POST'])
+def match():
+    # Build profile from form fields — preserve None for missing inputs (do not coerce to 0)
+    profile = {
+        'age': _to_int_or_none(request.form.get('age')),
+        'income': _to_float_or_none(request.form.get('income')),
+        'gender': (request.form.get('gender') or None),
+        'state': (request.form.get('state') or None),
+        'occupation': (request.form.get('occupation') or None),
+        'caste': (request.form.get('caste') or None),
+        'disability': (request.form.get('disability') or None),
+        'household_size': _to_int_or_none(request.form.get('household_size')) or 1
+    }
+
+    # call matcher which now expects (profile) and returns list of dicts
+    try:
+        results = evaluate_rules_for_profile(profile)
+    except TypeError:
+        # fallback if matcher signature is different
+        results = evaluate_rules_for_profile(profile)
+
+    # store in session briefly to show results page
+    session['last_results'] = results
+    session['profile'] = profile
+    return redirect(url_for('results'))
+
+
+@app.route('/results')
+def results():
+    results = session.get('last_results', [])
+    profile = session.get('profile', {})
+    return render_template('results.html', results=results, profile=profile)
+
+
+# ---------------- User auth (signup/login/logout) ----------------
+@app.route('/signup', methods=['GET','POST'])
+def signup():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        email = request.form.get('email')
+        phone = request.form.get('phone')
+        password = request.form.get('password')
+        if not email or not password:
+            flash('Email and password are required')
+            return redirect(url_for('signup'))
+
+        # check if user exists
+        existing = UserProfile.query.filter_by(email=email).first()
+        if existing:
+            flash('An account with that email already exists')
+            return redirect(url_for('signup'))
+
+        pw_hash = generate_password_hash(password)
+        user = UserProfile(email=email, password_hash=pw_hash, name=name, phone=phone, profile={})
+        db.session.add(user)
+        db.session.commit()
+        session['user_id'] = user.id
+        flash('Account created and logged in')
+        return redirect(url_for('index'))
+    return render_template('signup.html')
+
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        if not email or not password:
+            flash('Email and password required')
+            return redirect(url_for('login'))
+        user = UserProfile.query.filter_by(email=email).first()
+        if not user or not user.password_hash:
+            flash('Invalid credentials')
+            return redirect(url_for('login'))
+        if not check_password_hash(user.password_hash, password):
+            flash('Invalid credentials')
+            return redirect(url_for('login'))
+        session['user_id'] = user.id
+        flash('Logged in')
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id', None)
+    flash('Logged out')
+    return redirect(url_for('index'))
+
+
+@app.route('/scheme/<int:scheme_id>')
+def scheme_detail(scheme_id):
+    s = Scheme.query.get(scheme_id)
+    if not s:
+        return 'Scheme not found', 404
+
+    # fetch rule rows (could be 0..N)
+    rules = SchemeRule.query.filter_by(scheme_id=scheme_id).all()
+
+    # basic scheme metadata for template
+    scheme_data = {
+        'id': s.id,
+        'title': s.title,
+        'description': s.description,
+        'source_url': s.source_url
+    }
+
+    # snippet(s) and parser confidence — show first rule's snippet if present
+    snippet = None
+    rule_json = None
+    confidence = None
+    if rules:
+        r0 = rules[0]
+        snippet = getattr(r0, 'snippet', '') or ''
+        rule_json = r0.rule_json
+        confidence = getattr(r0, 'parser_confidence', None)
+
+    # Get the profile the user last submitted (from results page flow)
+    profile = session.get('profile')
+
+    # Build evaluation summary and details (per rule)
+    evaluation = None
+    evaluation_details = []
+    try:
+        if profile and rules:
+            # evaluate each rule with details
+            for r in rules:
+                rule_obj = r.rule_json
+                passed, score, details = evaluate_rule_with_details(rule_obj, profile)
+                # compute percent and label (same semantics as matcher)
+                score_pct = round(float(score) * 100.0, 2)
+                # detect failed atoms and skipped atoms
+                failed_any = any(d.get('status') is False for d in details)
+                skipped_any = any(d.get('skipped') for d in details)
+                if failed_any:
+                    label = 'Not Eligible'
+                elif score <= 0:
+                    label = 'Not Eligible'
+                elif score >= 1.0:
+                    label = 'Eligible' if not skipped_any else 'Maybe Eligible'
+                else:
+                    label = 'Maybe Eligible'
+
+                evaluation_details.append({
+                    'rule_id': getattr(r, 'id', None),
+                    'score': score_pct,
+                    'label': label,
+                    'parser_confidence': getattr(r, 'parser_confidence', None),
+                    'evaluations': details,
+                    'snippet': getattr(r, 'snippet', None)
+                })
+            # produce a short summary (best rule)
+            # pick best rule by score
+            best = max(evaluation_details, key=lambda x: x['score'])
+            evaluation = {
+                'label': best['label'],
+                'score': best['score'],
+                'parser_confidence': best.get('parser_confidence'),
+                'snippet': best.get('snippet'),
+                'rule_id': best.get('rule_id')
+            }
+        else:
+            # no profile or no rules
+            evaluation = None
+    except Exception as e:
+        evaluation = {'error': str(e)}
+
+    skipped_total = 0
+    try:
+        for det in evaluation_details:
+            for ev in det.get('evaluations', []):
+                # use .get('skipped') to be robust if key missing
+                if ev.get('skipped'):
+                    skipped_total += 1
+    except Exception:
+        # if anything goes wrong, default to 0 (don't break page)
+        skipped_total = 0
+
+    # pretty-rule JSON for display
+    pretty_rule = None
+    if rule_json:
+        try:
+            pretty_rule = json.dumps(rule_json, indent=2)
+        except:
+            pretty_rule = str(rule_json)
+
+    return render_template(
+        'scheme.html',
+        scheme=scheme_data,
+        snippet=snippet,
+        rule_json=pretty_rule,
+        confidence=confidence,
+        evaluation=evaluation,
+        evaluation_details=evaluation_details,
+        skipped_total=skipped_total    # <-- new variable passed to template
+    )
+
+# ---------------- Admin ----------------
+@app.route('/admin/login', methods=['GET','POST'])
+def admin_login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        # simple check; consider env vars or real auth in production
+        if username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "password"):
+            session['admin'] = True
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Invalid credentials')
+    return render_template('admin_login.html')
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin', None)
+    return redirect(url_for('index'))
+
+@app.route('/admin')
+def admin_dashboard():
+    if not session.get('admin'):
+        return redirect(url_for('admin_login'))
+
+    # Left join Scheme -> SchemeRule using ORM
+    rows = db.session.query(Scheme, SchemeRule).outerjoin(SchemeRule, Scheme.id==SchemeRule.scheme_id).all()
+    schemes = []
+    for scheme, rule in rows:
+        schemes.append({
+            'id': scheme.id,
+            'title': scheme.title,
+            'confidence': rule.parser_confidence if rule else None,
+            'has_rule': bool(rule)
+        })
+    return render_template('admin_dashboard.html', schemes=schemes)
+
+@app.route('/admin/verify/<int:scheme_id>', methods=['GET','POST'])
+def admin_verify(scheme_id):
+    if not session.get('admin'):
+        return redirect(url_for('admin_login'))
+
+    s = Scheme.query.get(scheme_id)
+    if not s:
+        return 'Scheme not found', 404
+
+    if request.method == 'POST':
+        rule_json = request.form.get('rule_json')
+        snippet = request.form.get('snippet')
+        try:
+            # Validate JSON; convert to python dict
+            parsed = json.loads(rule_json)
+        except Exception as e:
+            flash('Invalid JSON: ' + str(e))
+            return redirect(url_for('admin_verify', scheme_id=scheme_id))
+
+        existing = SchemeRule.query.filter_by(scheme_id=scheme_id).first()
+        if existing:
+            existing.rule_json = parsed
+            existing.snippet = snippet
+            existing.parser_confidence = 1.0
+            existing.verified = True
+        else:
+            newr = SchemeRule(scheme_id=scheme_id, rule_json=parsed, snippet=snippet, parser_confidence=1.0, verified=True)
+            db.session.add(newr)
+        db.session.commit()
+        flash('Saved')
+        return redirect(url_for('admin_dashboard'))
+    else:
+        r = SchemeRule.query.filter_by(scheme_id=scheme_id).first()
+        rule_json = json.dumps(r.rule_json, indent=2) if r and r.rule_json else json.dumps({'all': []}, indent=2)
+        snippet = r.snippet if r else 'No snippet available (dummy data)'
+        return render_template('admin_verify.html', scheme={'id': s.id, 'title': s.title}, rule_json=rule_json, snippet=snippet)
+
+
+# ---------------- Analytics APIs ----------------
+@app.route('/api/stats/schemes_by_state')
+def stats_schemes_by_state():
+    try:
+        from sqlalchemy import func
+        # This now relies on the added Scheme.state column in models.py
+        rows = db.session.query(Scheme.state, func.count(Scheme.id)).group_by(Scheme.state).all()
+        return jsonify([{ 'state': r[0] or 'Unknown', 'count': r[1]} for r in rows])
+    except Exception as e:
+        app.logger.exception("Error computing stats")
+        return jsonify({"error": "Failed to compute stats", "detail": str(e)}), 500
+
+@app.route('/api/scheme/<int:scheme_id>')
+def api_scheme(scheme_id):
+    s = Scheme.query.get(scheme_id)
+    if not s:
+        return jsonify({'error':'not found'}), 404
+    r = SchemeRule.query.filter_by(scheme_id=scheme_id).first()
+    return jsonify({
+        'id': s.id,
+        'title': s.title,
+        'description': s.description,
+        'source_url': s.source_url,
+        'rule': r.rule_json if r else None,
+        'snippet': r.snippet if r else None,
+        'confidence': r.parser_confidence if r else None
+    })
+
+
+# ---------------- Run ----------------nif __name__ == '__main__':
+    # optional: show SQL for debugging
+    # app.config['SQLALCHEMY_ECHO'] = True
+
+app.run(debug=True)# webapp/db.py
+import os
+from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
+
+load_dotenv()
+
+db = SQLAlchemy()
+
+def init_db(app):
+    """
+    Initialize SQLAlchemy with Flask app. Uses DATABASE_URL from .env.
+    """
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not set in environment (.env)")
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    db.init_app(app)
+
+    # create tables if they don't exist (uses models.py metadata)
+    with app.app_context():
+        db.create_all()
+# webapp/matcher.py
+import os
+import json
+from db import db
+from models import Scheme, SchemeRule
+
+# Behavior:
+# - For 'all' rules:
+#     * If any non-skipped atom explicitly FAILS -> rule score = 0.0 (Not Eligible)
+#     * Else score = passed_count / total_atoms  (skipped atoms count in denominator, preventing 100%)
+# - For 'any' rules:
+#     * If at least one non-skipped atom passes -> candidate passes; score = passed_count / total_atoms
+#     * If none pass -> score = 0.0
+# - Detailed per-atom evaluations are returned for UI/inspection.
+
+def _normalize_user_val(user_val):
+    """Normalize empty strings to None and return trimmed values."""
+    if user_val is None:
+        return None
+    if isinstance(user_val, str):
+        u = user_val.strip()
+        if u == '':
+            return None
+        return u
+    return user_val
+
+
+def _atomic_check(atom, profile):
+    """
+    Evaluate a single atomic rule.
+    Returns a tuple: (status, msg, skipped)
+      - status: True (pass) or False (fail) or None (skipped)
+      - msg: human readable message
+      - skipped: True if this atom was skipped due to missing profile field
+    """
+    field = atom.get('field')
+    op = atom.get('op')
+    value = atom.get('value')
+
+    user_val = profile.get(field)
+    user_val = _normalize_user_val(user_val)
+
+    if user_val is None:
+        # Missing field -> mark as skipped (we will still count it in total for 'all')
+        return None, f"field '{field}' missing in profile -> SKIPPED", True
+
+    # Numeric comparisons
+    if op in ('<', '<=', '>', '>='):
+        try:
+            uv = float(user_val)
+            vv = float(value)
+        except Exception:
+            return False, f"numeric comparison failed for field '{field}' (user='{user_val}', rule='{value}')", False
+        if op == '<':
+            return (uv < vv), f"{uv} < {vv}", False
+        if op == '<=':
+            return (uv <= vv), f"{uv} <= {vv}", False
+        if op == '>':
+            return (uv > vv), f"{uv} > {vv}", False
+        if op == '>=':
+            return (uv >= vv), f"{uv} >= {vv}", False
+
+    # Equality
+    if op == '==':
+        passed = str(user_val).strip().lower() == str(value).strip().lower()
+        return passed, (f"{user_val} == {value}" if passed else f"{user_val} != {value}"), False
+
+    # Membership: support list membership with case-insensitive & substring matching
+    if op == 'in':
+        vals = value if isinstance(value, (list, tuple, set)) else [value]
+        u = str(user_val).strip().lower()
+        for v in vals:
+            vs = str(v).strip().lower()
+            if vs == u:
+                return True, f"'{user_val}' equals '{v}'", False
+            if vs in u:
+                return True, f"'{v}' substring-match in '{user_val}'", False
+        return False, f"'{user_val}' not in {vals}", False
+
+    # Unknown operator
+    return False, f"unknown operator '{op}'", False
+
+
+def evaluate_rule_with_details(rule, profile):
+    """
+    Evaluate a rule and return tuple:
+      (passed_bool, score_float_in_0_1, details_list)
+
+    details_list contains dicts:
+      { 'atom': <atom>, 'status': True/False/None, 'msg': <str>, 'skipped': True/False }
+    """
+    if rule is None:
+        return False, 0.0, [{"error": "no rule provided"}]
+
+    # handle 'all'
+    if 'all' in rule:
+        atoms = rule['all']
+        details = []
+        passed_count = 0
+        failed_count = 0
+        total = len(atoms) if isinstance(atoms, (list, tuple)) else 0
+        if total == 0:
+            return False, 0.0, [{"error": "empty 'all' clause"}]
+
+        for atom in atoms:
+            status, msg, skipped = _atomic_check(atom, profile)
+            details.append({'atom': atom, 'status': status, 'msg': msg, 'skipped': bool(skipped)})
+            if status:
+                passed_count += 1
+            elif status is False:
+                failed_count += 1
+            # skipped -> neither passed nor failed_count incremented
+
+        # If any non-skipped atom explicitly failed -> hard fail -> score 0
+        if failed_count > 0:
+            return False, 0.0, details
+
+        # No failures among provided inputs. Score uses total atoms (skipped counted),
+        # so missing fields reduce the percent and prevent 100% unless all atoms actually passed.
+        score = passed_count / total if total > 0 else 0.0
+        passed = (passed_count == total)  # true only if every atom passed (no skips, no fails)
+        return passed, score, details
+
+    # handle 'any'
+    if 'any' in rule:
+        atoms = rule['any']
+        details = []
+        passed_count = 0
+        total = len(atoms) if isinstance(atoms, (list, tuple)) else 0
+        if total == 0:
+            return False, 0.0, [{"error": "empty 'any' clause"}]
+
+        for atom in atoms:
+            status, msg, skipped = _atomic_check(atom, profile)
+            details.append({'atom': atom, 'status': status, 'msg': msg, 'skipped': bool(skipped)})
+            if status:
+                passed_count += 1
+            # skipped counts toward total but not passed_count
+
+        passed_any = passed_count >= 1
+        # Score reflects fraction of atoms that passed among total atoms (skips lower fraction)
+        score = passed_count / total if total > 0 else 0.0
+        return passed_any, score, details
+
+    # atomic single rule
+    status, msg, skipped = _atomic_check(rule, profile)
+    if skipped:
+        # missing -> treat as not passed (and counts toward denominator externally)
+        return False, 0.0, [{'atom': rule, 'status': None, 'msg': msg, 'skipped': True}]
+    # direct atomic pass/fail
+    return bool(status), (1.0 if status else 0.0), [{'atom': rule, 'status': bool(status), 'msg': msg, 'skipped': False}]
+
+
+def evaluate_rule(rule, profile):
+    """
+    Backwards-compatible boolean API (returns True if rule passes).
+    """
+    passed, score, details = evaluate_rule_with_details(rule, profile)
+    return bool(passed)
+
+
+def evaluate_rules_for_profile(profile):
+    """
+    Returns list of results for all schemes using SQLAlchemy models.
+
+    Each result contains:
+      - scheme_id, title, description
+      - result: one of 'Eligible', 'Maybe Eligible', 'Not Eligible'
+      - score: percent (0..100 float)
+      - reasons: detailed dict including 'evaluations' (atoms), 'snippet', 'parser_confidence', etc.
+    """
+    schemes = Scheme.query.order_by(Scheme.title).all()
+    results = []
+
+    for s in schemes:
+        rules = SchemeRule.query.filter_by(scheme_id=s.id).all()
+        best_score = -1.0
+        best_passed = False
+        best_details = {'note': 'No rule available'}
+        # Evaluate every rule and pick the one with highest score (prefer higher completeness)
+        if rules:
+            for r in rules:
+                try:
+                    rule_obj = r.rule_json
+                    passed, score, details = evaluate_rule_with_details(rule_obj, profile)
+                    # choose best by raw score; if equal prefer passed==True
+                    if score > best_score or (score == best_score and passed and not best_passed):
+                        best_score = score
+                        best_passed = passed
+                        best_details = {
+                            'snippet': getattr(r, 'snippet', None),
+                            'parser_confidence': getattr(r, 'parser_confidence', None),
+                            'rule_id': getattr(r, 'id', None),
+                            'evaluations': details
+                        }
+                except Exception as e:
+                    best_details = {'error': str(e)}
+        else:
+            best_details = {'note': 'No rule available'}
+            best_score = 0.0
+            best_passed = False
+
+        # Normalize best_score if never set
+        if best_score < 0:
+            best_score = 0.0
+
+        # Determine result label:
+        # - If score == 0.0 -> Not Eligible
+        # - If score == 1.0 -> Eligible (all atoms present and passed)
+        # - Else -> Maybe Eligible (partial match / missing fields)
+        score_percent = float(best_score) * 100.0
+
+        if best_score <= 0.0:
+            label = 'Not Eligible'
+        elif best_score >= 1.0:
+            label = 'Eligible'
+        else:
+            label = 'Maybe Eligible'
+
+        results.append({
+            'scheme_id': s.id,
+            'title': s.title,
+            'description': s.description,
+            'result': label,
+            'score': round(score_percent, 2),   # percent with two decimals
+            'reasons': best_details
+        })
+
+    # sort: higher score first, then title
+    results = sorted(results, key=lambda x: (-x['score'], x['title']))
+    return results
+# models.py
+
+from db import db
+from datetime import datetime
+import json
+
+class Scheme(db.Model):
+    __tablename__ = "schemes"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String, nullable=False)
+    # FIX: Added state column, which is used in sample_data.py
+    state = db.Column(db.String, nullable=True) 
+    # Use db.Text for potentially long descriptions
+    description = db.Column(db.Text) 
+    source_url = db.Column(db.String)
+    last_scraped = db.Column(db.DateTime)
+    raw_html_path = db.Column(db.String)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "title": self.title, "description": self.description,
+            "state": self.state, # Added to dictionary representation
+            "source_url": self.source_url, "last_scraped": self.last_scraped.isoformat() if self.last_scraped else None
+        }
+
+class SchemeRule(db.Model):
+    __tablename__ = "scheme_rules"
+    id = db.Column(db.Integer, primary_key=True)
+    scheme_id = db.Column(db.Integer, db.ForeignKey("schemes.id"), nullable=False)
+    rule_json = db.Column(db.JSON)
+    # Use db.Text for snippets
+    snippet = db.Column(db.Text) 
+    parser_confidence = db.Column(db.Float, default=0.0)
+    verified = db.Column(db.Boolean, default=False)
+
+class UserProfile(db.Model):
+    __tablename__ = "users"
+    id = db.Column(db.Integer, primary_key=True)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
+    # Basic account fields for user management
+    email = db.Column(db.String, unique=True, nullable=True)
+    password_hash = db.Column(db.String, nullable=True)
+    name = db.Column(db.String, nullable=True)
+    phone = db.Column(db.String, nullable=True)
+    # store the submitted profile JSON (demographic/profile info used for matching)
+    profile = db.Column(db.JSON)
+
+class MatchResult(db.Model):
+    __tablename__ = "matches"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    scheme_id = db.Column(db.Integer, db.ForeignKey("schemes.id"))
+    result = db.Column(db.String)    # eligible/maybe/not
+    score = db.Column(db.Float)
+    reasons = db.Column(db.JSON)
+    created = db.Column(db.DateTime, default=datetime.utcnow)# routes.py
+import os
+import json
+import traceback
+from functools import wraps
+from flask import (
+    request, jsonify, render_template, redirect, url_for,
+    abort, current_app, session
+)
+
+from app import app
+from db import db
+from models import Scheme, SchemeRule, UserProfile, MatchResult
+
+# ------------------------------------------------------------------
+# Matcher integration: try direct python import first, else HTTP call
+# Person B should expose a function: match_profile(profile: dict) -> list[dict]
+# Each dict: {"scheme_id": int, "result": "eligible"/"maybe"/"not", "score": float, "reasons": {...}}
+# ------------------------------------------------------------------
+MATCHER_TYPE = "none"
+match_profile = None
+
+try:
+    # try direct import (preferred)
+    from matcher.engine import match_profile as match_profile_py  # adjust path if needed
+    match_profile = match_profile_py
+    MATCHER_TYPE = "python"
+    app.logger.info("Matcher integrated: python import")
+except Exception:
+    # fallback to HTTP
+    MATCHER_HTTP_URL = os.getenv("MATCHER_HTTP_URL", "http://localhost:8000/match")
+    MATCHER_TYPE = "http"
+    app.logger.info("Matcher not available via python import; will use HTTP at %s", MATCHER_HTTP_URL)
+
+
+# ------------------------------------------------------------------
+# Basic admin auth decorator (very small, env-configured)
+# Use ADMIN_USER and ADMIN_PASS environment variables.
+# For production, replace with proper auth!
+# ------------------------------------------------------------------
+def check_admin_auth(username, password):
+    return username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "password")
+
+
+def require_admin(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_admin_auth(auth.username, auth.password):
+            return current_app.make_response(('Could not verify your access level for that URL.\n'
+                                              'You have to login with proper credentials', 401,
+                                              {'WWW-Authenticate': 'Basic realm="Login Required"'}))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ------------------------------------------------------------------
+# Landing page
+# ------------------------------------------------------------------
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html") if os.path.exists(os.path.join(app.root_path, "templates", "index.html")) else "Gov Schemes - Home"
+
+
+# ------------------------------------------------------------------
+# Simple profile input page (Jinja form) - client-side JS posts to /api/match
+# ------------------------------------------------------------------
+@app.route("/match", methods=["GET"])
+def match_form():
+    # If template exists, render it. Else show a minimal HTML form
+    template_path = os.path.join(app.root_path, "templates", "match_form.html")
+    if os.path.exists(template_path):
+        return render_template("match_form.html")
+    return """
+    <h2>Profile Input</h2>
+    <form id="p">
+      Age: <input name="age"><br>
+      Income: <input name="income"><br>
+      Gender: <input name="gender"><br>
+      State: <input name="state"><br>
+      Occupation: <input name="occupation"><br>
+      <button type="submit">Submit</button>
+    </form>
+    <pre id="out"></pre>
+    <script>
+    document.getElementById('p').onsubmit = async e => {
+      e.preventDefault();
+      const f = e.target;
+      const data = {
+        age: Number(f.age.value) || null,
+        income: Number(f.income.value) || null,
+        gender: f.gender.value || null,
+        state: f.state.value || null,
+        occupation: f.occupation.value || null
+      };
+      const res = await fetch('/api/match', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+      const j = await res.json();
+      document.getElementById('out').innerText = JSON.stringify(j, null, 2);
+    };
+    </script>
+    """
+
+
+# ------------------------------------------------------------------
+# API: get scheme details + its parsed rules
+# ------------------------------------------------------------------
+@app.route("/api/scheme/<int:scheme_id>", methods=["GET"])
+def api_scheme(scheme_id):
+    scheme = Scheme.query.get_or_404(scheme_id)
+    rules = SchemeRule.query.filter_by(scheme_id=scheme_id).all()
+    return jsonify({
+        "scheme": scheme.to_dict() if hasattr(scheme, "to_dict") else {
+            "id": scheme.id, "title": scheme.title, "description": scheme.description, "source_url": scheme.source_url
+        },
+        "rules": [
+            {
+                "id": r.id,
+                "rule_json": r.rule_json,
+                "snippet": r.snippet,
+                "parser_confidence": r.parser_confidence,
+                "verified": r.verified
+            } for r in rules
+        ]
+    })
+
+
+# ------------------------------------------------------------------
+# API: run matching for a profile
+# - saves user profile into users table
+# - persists match results into matches
+# ------------------------------------------------------------------
+@app.route("/api/match", methods=["POST"])
+def api_match():
+    try:
+        profile = request.get_json(silent=True)
+        if not profile or not isinstance(profile, dict):
+            return jsonify({"error": "Profile JSON required"}), 400
+
+        # Save user profile. If a user is logged in, attach profile to that user.
+        user = None
+        if session.get('user_id'):
+            try:
+                user = UserProfile.query.get(session.get('user_id'))
+            except Exception:
+                user = None
+        if user:
+            user.profile = profile
+            db.session.add(user)
+            db.session.commit()
+        else:
+            user = UserProfile(profile=profile)
+            db.session.add(user)
+            db.session.commit()
+            # store anonymous user id in session so subsequent calls can be linked
+            session['user_id'] = user.id
+
+        # Call matcher
+        results = []
+        if MATCHER_TYPE == "python" and match_profile:
+            try:
+                results = match_profile(profile)
+            except Exception as e:
+                app.logger.exception("Matcher (python) failed: %s", e)
+                return jsonify({"error": "Internal matcher error", "detail": str(e)}), 500
+        else:
+            # HTTP fallback
+            TRY_URL = os.getenv("MATCHER_HTTP_URL", "http://localhost:8000/match")
+            try:
+                import requests
+                resp = requests.post(TRY_URL, json=profile, timeout=15)
+                resp.raise_for_status()
+                results = resp.json()
+            except Exception as e:
+                app.logger.exception("Matcher (http) failed: %s", e)
+                # As a fallback, return empty results (or stub) but keep user saved
+                # You may prefer to return 500 instead.
+                return jsonify({"error": "Matcher service unavailable", "detail": str(e)}), 502
+
+        # Validate results format (basic)
+        if not isinstance(results, list):
+            return jsonify({"error": "Invalid matcher response format"}), 502
+
+        # Persist match results
+        saved = []
+        for r in results:
+            try:
+                scheme_id = int(r.get("scheme_id"))
+                result_label = r.get("result", "not")
+                score = r.get("score")
+                reasons = r.get("reasons", {})
+                mr = MatchResult(user_id=user.id, scheme_id=scheme_id, result=result_label, score=score, reasons=reasons)
+                db.session.add(mr)
+                saved.append({
+                    "scheme_id": scheme_id,
+                    "result": result_label,
+                    "score": score,
+                    "reasons": reasons
+                })
+            except Exception:
+                app.logger.exception("Failed saving match result: %s", r)
+        db.session.commit()
+
+        return jsonify({"user_id": user.id, "results": saved}), 200
+
+    except Exception as e:
+        app.logger.exception("Unhandled /api/match error")
+        return jsonify({"error": "Internal server error", "detail": str(e)}), 500
+
+
+# ------------------------------------------------------------------
+# Example analytics endpoint: schemes grouped by source_url (demonstration)
+# Adapt to your actual 'state' column or extraction
+# ------------------------------------------------------------------
+@app.route("/api/stats/schemes_by_state", methods=["GET"])
+def stats_schemes_by_state():
+    try:
+        # Example: if schemes store state in raw_html_path or description, you'd adapt this.
+        # Here we group by source_url as a placeholder.
+        from sqlalchemy import func
+        rows = db.session.query(Scheme.source_url, func.count(Scheme.id)).group_by(Scheme.source_url).all()
+        return jsonify([{"source_url": r[0], "count": r[1]} for r in rows])
+    except Exception as e:
+        app.logger.exception("Error computing stats")
+        return jsonify({"error": "Failed to compute stats", "detail": str(e)}), 500
+
+
+# ------------------------------------------------------------------
+# ADMIN UI: list unverified/low-confidence rules
+# ------------------------------------------------------------------
+@app.route("/admin", methods=["GET"])
+@require_admin
+def admin_index():
+    try:
+        pending = SchemeRule.query.filter_by(verified=False).order_by(SchemeRule.parser_confidence.asc()).limit(200).all()
+        # If template exists, render it
+        template_path = os.path.join(app.root_path, "templates", "admin_index.html")
+        if os.path.exists(template_path):
+            return render_template("admin_index.html", pending=pending)
+        # Minimal HTML fallback
+        html = "<h1>Admin - Pending Rules</h1><ul>"
+        for r in pending:
+            html += f"<li>Rule #{r.id} (scheme={r.scheme_id}) - confidence={r.parser_confidence} - <a href='{url_for('admin_verify', rule_id=r.id)}'>verify</a></li>"
+        html += "</ul>"
+        return html
+    except Exception as e:
+        app.logger.exception("Admin index error")
+        return "Admin error", 500
+
+
+# ------------------------------------------------------------------
+# ADMIN: verify & edit a single rule
+# ------------------------------------------------------------------
+@app.route("/admin/verify/<int:rule_id>", methods=["GET", "POST"])
+@require_admin
+def admin_verify(rule_id):
+    rule = SchemeRule.query.get_or_404(rule_id)
+    if request.method == "POST":
+        # admin submitted edited JSON (form or raw)
+        raw = request.form.get("rule_json") or request.get_data(as_text=True)
+        if not raw:
+            return "No rule_json submitted", 400
+        try:
+            parsed = json.loads(raw)
+        except Exception as e:
+            return f"Invalid JSON: {e}", 400
+        rule.rule_json = parsed
+        rule.verified = True
+        db.session.commit()
+        return redirect(url_for("admin_index"))
+    # GET -> render verification page
+    template_path = os.path.join(app.root_path, "templates", "admin_verify.html")
+    if os.path.exists(template_path):
+        return render_template("admin_verify.html", rule=rule)
+    # Minimal HTML fallback
+    return f"""
+    <h2>Verify Rule #{rule.id} (scheme {rule.scheme_id})</h2>
+    <h3>Original snippet</h3>
+    <pre>{rule.snippet or ''}</pre>
+    <h3>Current JSON</h3>
+    <form method="post">
+      <textarea name="rule_json" style="width:100%;min-height:300px;">{json.dumps(rule.rule_json or {}, indent=2)}</textarea>
+      <br><button type="submit">Save & Verify</button>
+    </form>
+    """
+
+
+# ------------------------------------------------------------------
+# ADMIN API: update rule (JSON)
+# ------------------------------------------------------------------
+@app.route("/admin/update_rule", methods=["POST"])
+@require_admin
+def admin_update_rule():
+    try:
+        payload = request.get_json(force=True)
+        rule_id = payload.get("rule_id")
+        new_rule = payload.get("rule_json")
+        if not rule_id or new_rule is None:
+            return jsonify({"error": "rule_id and rule_json required"}), 400
+        rule = SchemeRule.query.get_or_404(rule_id)
+        rule.rule_json = new_rule
+        rule.verified = True
+        # optional: update parser_confidence
+        if "parser_confidence" in payload:
+            try:
+                rule.parser_confidence = float(payload["parser_confidence"])
+            except Exception:
+                pass
+        db.session.commit()
+        return jsonify({"ok": True, "rule_id": rule.id}), 200
+    except Exception as e:
+        app.logger.exception("admin_update_rule failed")
+        return jsonify({"error": "update failed", "detail": str(e)}), 500
+
+
+# ------------------------------------------------------------------
+# Error handlers (optional niceties)
+# ------------------------------------------------------------------
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.errorhandler(500)
+def internal_err(e):
+    tb = traceback.format_exc()
+    app.logger.error("Internal error: %s", tb)
+    return jsonify({"error": "Internal server error"}), 500
+# webapp/sample_data.py
+
+import json
+from db import db
+from models import Scheme, SchemeRule
+
+SAMPLE_SCHEMES = [
+    {
+        'title': 'Young Farmers Support Scheme',
+        'description': 'Support scheme for farmers aged between 18 and 35 with annual income below 500000',
+        'state': 'Karnataka',
+        'source_url': 'https://gov.example/young-farmers'
+    },
+    {
+        'title': 'Senior Citizens Health Aid',
+        'description': 'Health aid for citizens above 60 years with low income',
+        'state': 'Maharashtra',
+        'source_url': 'https://gov.example/senior-health'
+    },
+    {
+        'title': 'Women Entrepreneur Grant',
+        'description': 'Grant for women entrepreneurs with household income below 800000',
+        'state': 'Karnataka',
+        'source_url': 'https://gov.example/women-entrepreneur'
+    }
+]
+
+SAMPLE_RULES = {
+    1: {
+        'all':[{'field':'age','op':'>=','value':18},{'field':'age','op':'<=','value':35},{'field':'occupation','op':'in','value':['farmer','agricultural worker']},{'field':'income','op':'<','value':500000}],
+    },
+    2: {
+        'all':[{'field':'age','op':'>=','value':60},{'field':'income','op':'<','value':400000}],
+    },
+    3: {
+        'all':[{'field':'gender','op':'==','value':'female'},{'field':'income','op':'<','value':800000}],
+    }
+}
+
+def ensure_sample_data():
+    """
+    Ensure sample rows exist in Postgres via SQLAlchemy.
+    """
+    # quick existence check
+    if Scheme.query.count() > 0:
+        return
+
+    # insert schemes
+    for s in SAMPLE_SCHEMES:
+        # FIX: Ensure state is explicitly passed
+        scheme = Scheme(title=s['title'], description=s['description'], state=s['state'], source_url=s['source_url']) 
+        db.session.add(scheme)
+    db.session.commit()
+
+    # create rules - associate with inserted schemes in same order
+    schemes = Scheme.query.order_by(Scheme.id).all()
+    for idx, scheme_obj in enumerate(schemes, start=1):
+        rule = SAMPLE_RULES.get(idx)
+        if rule:
+            sr = SchemeRule(scheme_id=scheme_obj.id, rule_json=rule, snippet=f'Sample extracted snippet for scheme {scheme_obj.id}', parser_confidence=0.9)
+            db.session.add(sr)
+    db.session.commit()

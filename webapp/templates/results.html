@@ -1,7 +1,15 @@
+<!-- results.html -->
 {% extends 'base.html' %}
 {% block body %}
-<h1>Results</h1>
 
+<div style="display:flex; justify-content:space-between; align-items:center;">
+  <h1>Results</h1>
+  {% if session.get('user_id') %}
+    <a href="/profile" class="btn small" style="background:#6c757d;">Edit My Profile</a>
+  {% else %}
+    <a href="/" class="btn small" style="background:#6c757d;">Edit Inputs</a>
+  {% endif %}
+</div>
 <div class="controls" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
   <div>
     <label for="filterStatus">Filter:</label>
