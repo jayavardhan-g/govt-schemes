@@ -93,10 +93,90 @@
   {% endif %}
 
   <label>Age: <input type="number" name="age" required></label><br>
+
   <label>Income (annual): <input type="number" name="income" required></label><br>
+
+  <label>Gender:
+    <select name="gender">
+      <option value="">--</option>
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+      <option value="other">Other</option>
+    </select>
+  </label><br>
+
+  <label>State:
+    <select name="state" id="stateSelect">
+      <option value="">-- Select state/UT --</option>
+      {% if states %}
+        {% for s in states %}
+          <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      {% endif %}
+    </select>
+  </label><br>
+
+  <label>Occupation: <input type="text" name="occupation"></label><br>
+
+  <label>Caste/Category:
+    <select name="caste" id="casteSelect">
+      <option value="">-- Select caste/category --</option>
+      {% if castes %}
+        {% for c in castes %}
+          <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      {% endif %}
+    </select>
+  </label><br>
+
+  <label>Disability:
+    <select name="disability">
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  </label><br>
+
+  <label>Household size: <input type="number" name="household_size" value="1"></label><br>
   
-  <button type="submit">Check</button>
+  <button type="submit">Check Eligibility</button>
 </form>
+
+<script>
+// client-side fallback in case template vars are missing (keeps form usable)
+const fallbackStates = [
+  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
+  "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
+  "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
+  "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
+  "Uttar Pradesh","Uttarakhand","West Bengal",
+  "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
+];
+const fallbackCastes = [
+  "General/Unreserved",
+  "Other Backward Classes (OBC)",
+  "Scheduled Caste (SC)",
+  "Scheduled Tribe (ST)",
+  "Economically Weaker Section (EWS)",
+  "Other / Prefer not to say"
+];
+
+(function ensureSelects() {
+  const stateSelect = document.getElementById('stateSelect');
+  // Only add fallbacks if Python didn't populate them (length <= 1 means only the default option exists)
+  if (stateSelect && stateSelect.options.length <= 1) {
+    fallbackStates.forEach(s => {
+      const o = document.createElement('option'); o.value = s; o.text = s; stateSelect.add(o);
+    });
+  }
+  const casteSelect = document.getElementById('casteSelect');
+  if (casteSelect && casteSelect.options.length <= 1) {
+    fallbackCastes.forEach(c => {
+      const o = document.createElement('option'); o.value = c; o.text = c; casteSelect.add(o);
+    });
+  }
+})();
+</script>
 
 {% endblock %}<!-- login.html -->
 {% extends 'base.html' %}
@@ -175,55 +255,191 @@
   input, select { padding: 5px; width: 100%; max-width: 300px; }
   .btn { background:#007bff; color:#fff; padding:8px 12px; border-radius:6px; border:none; cursor:pointer; }
 </style>
-{% endblock %}<!-- results.html -->
-{% extends 'base.html' %}
+{% endblock %}{% extends 'base.html' %}
 {% block body %}
 
 {% if is_dashboard %}
-<div class="dashboard-header">
-  <div class="welcome-msg">
-    <h2>Recommended for you</h2>
-    <p class="muted">Based on your saved profile.</p>
+  <div class="dashboard-header">
+    <div class="welcome-msg">
+      <h2>👋 Your Dashboard</h2>
+      <p class="muted">Schemes matched to your saved profile.</p>
+    </div>
+    <div class="dashboard-actions">
+      <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
+      <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
+    </div>
   </div>
-  <div class="dashboard-actions">
-    <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
-    
-    <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
-  </div>
-</div>
-<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
 {% else %}
-  <h1>Results</h1>
+  <div class="dashboard-header" style="background: #e3f2fd; border-color: #bbdefb;">
+    <div class="welcome-msg">
+      <h2>👤 Guest Results</h2>
+      <p class="muted" style="margin-bottom: 5px;">
+        <strong>Showing matches for:</strong> 
+        Age: {{ profile.get('age') }}, 
+        State: {{ profile.get('state') or 'Any' }}, 
+        Occupation: {{ profile.get('occupation') or 'Any' }}
+      </p>
+    </div>
+    <div class="dashboard-actions">
+      <a href="/?mode=manual" class="btn btn-small">🔄 Check Another</a>
+      <a href="/" class="btn btn-outline">🏠 Back to My Dashboard</a>
+    </div>
+  </div>
 {% endif %}
 
+<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+
 <div class="controls" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
-    </div>
+  <div>
+    <label for="filterStatus">Filter:</label>
+    <select id="filterStatus">
+      <option value="all">All</option>
+      <option value="Eligible">Eligible</option>
+      <option value="Maybe Eligible">Maybe Eligible</option>
+      <option value="Not Eligible">Not Eligible</option>
+    </select>
+  </div>
+
+  <div>
+    <label for="searchBox">Search:</label>
+    <input id="searchBox" type="search" placeholder="Scheme name..." />
+  </div>
+
+  <div style="margin-left:auto;">
+    <button id="sortBtn" class="btn">Sort: <span id="sortDirection">desc</span></button>
+  </div>
+</div>
+
 <table id="resultsTable" style="width:100%; border-collapse:collapse;">
-    </table>
+  <thead>
+    <tr style="text-align:left; border-bottom:1px solid #e6e6e6;">
+      <th style="padding:8px 6px;">Scheme</th>
+      <th style="padding:8px 6px;">Status</th>
+      <th style="padding:8px 6px; cursor:pointer;" id="hdrMatch">Match % ▲▼</th>
+      <th style="padding:8px 6px;">Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in results %}
+      <tr class="result-row" data-title="{{ r.title|lower }}" data-status="{{ r.result }}" data-score="{{ r.score }}">
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">{{ r.title }}</td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">
+          {% if r.result == 'Eligible' %}
+            <span class="badge" style="background:#28a745;">Eligible</span>
+          {% elif r.result == 'Maybe Eligible' %}
+            <span class="badge" style="background:#f0ad4e; color:#111;">Maybe</span>
+          {% else %}
+            <span class="badge" style="background:#d9534f;">Not eligible</span>
+          {% endif %}
+        </td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3; width:260px;">
+          <div class="progress-row" title="{{ '%.2f'|format(r.score) }}%">
+            <div class="progress-bg" aria-hidden="true">
+              <div class="progress-fill" style="width: {{ r.score }}%;"></div>
+            </div>
+            <div class="progress-text">{{ '%.2f'|format(r.score) }}%</div>
+          </div>
+        </td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">
+          <a href="/scheme/{{ r.scheme_id }}" class="btn small">View Details</a>
+        </td>
+      </tr>
+    {% else %}
+      <tr>
+        <td colspan="4" style="padding:30px; text-align:center; color:#666;">
+          <h3>No matches found.</h3>
+          <p>Try changing the search criteria (e.g., set Income to 50000 or Occupation to Farmer).</p>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
 
 <style>
-  .dashboard-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: #f8f9fa;
-    padding: 20px;
-    border-radius: 8px;
-    border: 1px solid #e9ecef;
-  }
-  .welcome-msg h2 { margin: 0 0 5px 0; font-size: 1.5rem; }
-  .dashboard-actions { display: flex; gap: 10px; }
-  .btn-outline { 
-    background: white; 
-    border: 1px solid #007bff; 
-    color: #007bff; 
-    padding: 8px 12px; 
-    border-radius: 6px; 
-    text-decoration: none; 
-    font-weight: 600;
-  }
-  .btn-outline:hover { background: #f0f7ff; }
+.dashboard-header {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;
+}
+.welcome-msg h2 { margin: 0 0 5px 0; font-size: 1.5rem; }
+.dashboard-actions { display: flex; gap: 10px; align-items: center;}
+.btn-outline { 
+  background: white; border: 1px solid #007bff; color: #007bff; 
+  padding: 8px 12px; border-radius: 6px; text-decoration: none; font-weight: 600;
+}
+.btn-outline:hover { background: #f0f7ff; }
+
+/* Common Styles */
+.btn { background:#007bff; color:#fff; padding:6px 10px; border-radius:6px; text-decoration:none; border:none; cursor:pointer; }
+.btn.small { padding:6px 8px; font-size:0.9rem; }
+.badge { color:#fff; padding:4px 8px; border-radius:6px; font-weight:700; display:inline-block; font-size: 0.85rem;}
+.progress-row { display:flex; align-items:center; gap:8px; }
+.progress-bg { width:160px; height:12px; background:#f1f1f1; border-radius:8px; overflow:hidden; }
+.progress-fill { height:12px; width:0%; transition:width .4s ease; }
+.progress-text { min-width:48px; font-weight:600; color:#222; font-size: 0.9rem;}
+.progress-fill.green { background:linear-gradient(90deg,#6bc16b,#2fa84f); }
+.progress-fill.yellow { background:linear-gradient(90deg,#f7c76b,#f0ad4e); }
+.progress-fill.red { background:linear-gradient(90deg,#f18a8a,#d9534f); }
 </style>
+
+<script>
+(function(){
+  const table = document.getElementById('resultsTable');
+  const tbody = table.querySelector('tbody');
+  const sortBtn = document.getElementById('sortBtn');
+  const sortDirectionSpan = document.getElementById('sortDirection');
+  const hdrMatch = document.getElementById('hdrMatch');
+  const filterStatus = document.getElementById('filterStatus');
+  const searchBox = document.getElementById('searchBox');
+
+  function colorizeRows() {
+    document.querySelectorAll('.result-row').forEach(row => {
+      const score = parseFloat(row.dataset.score) || 0;
+      const status = row.dataset.status || '';
+      const fill = row.querySelector('.progress-fill');
+      fill.classList.remove('green','yellow','red');
+      if (status === 'Eligible') fill.classList.add('green');
+      else if (status === 'Maybe Eligible') fill.classList.add('yellow');
+      else fill.classList.add('red');
+      fill.style.width = Math.max(0, Math.min(100, score)) + '%';
+    });
+  }
+
+  let sortDesc = true;
+  function sortRows() {
+    const rows = Array.from(tbody.querySelectorAll('.result-row'));
+    rows.sort((a,b) => {
+      const sa = parseFloat(a.dataset.score) || 0;
+      const sb = parseFloat(b.dataset.score) || 0;
+      return sortDesc ? (sb - sa) : (sa - sb);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+
+  function applyFilters() {
+    const statusFilter = filterStatus.value;
+    const q = (searchBox.value || '').trim().toLowerCase();
+    document.querySelectorAll('.result-row').forEach(row => {
+      const title = row.dataset.title || '';
+      const status = row.dataset.status || '';
+      let visible = true;
+      if (statusFilter !== 'all' && status !== statusFilter) visible = false;
+      if (q && title.indexOf(q) === -1) visible = false;
+      row.style.display = visible ? '' : 'none';
+    });
+  }
+
+  if(sortBtn) sortBtn.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(hdrMatch) hdrMatch.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(filterStatus) filterStatus.addEventListener('change', applyFilters);
+  if(searchBox) searchBox.addEventListener('input', applyFilters);
+
+  colorizeRows();
+  sortRows();
+})();
+</script>
 
 {% endblock %}<!-- scheme.html -->
 {% extends 'base.html' %}
@@ -353,7 +569,15 @@
 .status-row { display:flex; gap:12px; align-items:center; margin-top:8px; }
 .explain-banner { background:#fffbe6; border:1px solid #f1e5b8; padding:10px; border-radius:6px; margin:10px 0; color:#6b4f00; }
 .snippet-box { background:#fff; border:1px solid #eee; padding:10px; border-radius:6px; white-space:pre-wrap; }
-.rule-json { background:#f7f7f9; padding:10px; border-radius:6px; white-space:pre-wrap; }
+.rule-json { 
+    background: #f8f9fa;       /* Light grey background */
+    color: #212529;            /* Force Dark Text */
+    padding: 10px; 
+    border-radius: 6px; 
+    white-space: pre-wrap; 
+    font-family: monospace;    /* Better for code readability */
+    border: 1px solid #e9ecef; /* Subtle border definition */
+}
 .rule-card { border:1px solid #eee; padding:10px; border-radius:6px; margin-bottom:10px; background:#fff;}
 .rule-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
 .rule-meta { font-weight:700; }

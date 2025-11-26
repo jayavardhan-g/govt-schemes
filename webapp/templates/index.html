@@ -1,104 +1,27 @@
 {% extends 'base.html' %}
 {% block body %}
 
-{% if manual_mode %}
-<div style="background: #e2e3e5; padding: 10px; border-radius: 6px; margin-bottom: 20px; color: #383d41;">
-    <strong>Guest Mode:</strong> You are checking eligibility for another person. 
-    <a href="/">Return to my dashboard</a>
+<div style="text-align: center; margin-top: 40px; margin-bottom: 30px;">
+  <h1 style="font-size: 2.5rem; margin-bottom: 10px;">Government Scheme Matcher</h1>
+  <p style="font-size: 1.1rem; color: #666;">Find welfare schemes tailored to your profile instantly.</p>
 </div>
-{% endif %}
 
-<h1>Check Scheme Eligibility</h1>
-<form action="/match" method="post">
-  
-  {% if manual_mode %}
-    <input type="hidden" name="is_manual_check" value="1">
-  {% endif %}
+<div style="max-width: 500px; margin: 0 auto; padding: 30px; border: 1px solid #e0e0e0; border-radius: 12px; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+  <div style="text-align: center;">
+    <p style="margin-bottom: 20px;">Create a profile once and check eligibility against hundreds of schemes.</p>
+    
+    <a href="/signup" class="btn" style="display: inline-block; width: 100%; padding: 12px; font-size: 1.1rem; margin-bottom: 15px; text-align: center;">Get Started</a>
+    
+    <div style="color: #666; font-size: 0.95rem;">
+      Already have an account? <a href="/login" style="color: #007bff; text-decoration: none; font-weight: 600;">Login here</a>
+    </div>
+  </div>
+</div>
 
-  <label>Age: <input type="number" name="age" required></label><br>
-
-  <label>Income (annual): <input type="number" name="income" required></label><br>
-
-  <label>Gender:
-    <select name="gender">
-      <option value="">--</option>
-      <option value="male">Male</option>
-      <option value="female">Female</option>
-      <option value="other">Other</option>
-    </select>
-  </label><br>
-
-  <label>State:
-    <select name="state" id="stateSelect">
-      <option value="">-- Select state/UT --</option>
-      {% if states %}
-        {% for s in states %}
-          <option value="{{ s }}">{{ s }}</option>
-        {% endfor %}
-      {% endif %}
-    </select>
-  </label><br>
-
-  <label>Occupation: <input type="text" name="occupation"></label><br>
-
-  <label>Caste/Category:
-    <select name="caste" id="casteSelect">
-      <option value="">-- Select caste/category --</option>
-      {% if castes %}
-        {% for c in castes %}
-          <option value="{{ c }}">{{ c }}</option>
-        {% endfor %}
-      {% endif %}
-    </select>
-  </label><br>
-
-  <label>Disability:
-    <select name="disability">
-      <option value="no">No</option>
-      <option value="yes">Yes</option>
-    </select>
-  </label><br>
-
-  <label>Household size: <input type="number" name="household_size" value="1"></label><br>
-  
-  <button type="submit">Check Eligibility</button>
-</form>
-
-<script>
-// client-side fallback in case template vars are missing (keeps form usable)
-const fallbackStates = [
-  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
-  "Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala",
-  "Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland",
-  "Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura",
-  "Uttar Pradesh","Uttarakhand","West Bengal",
-  "Andaman and Nicobar Islands","Chandigarh","Dadra and Nagar Haveli and Daman and Diu",
-  "Delhi","Jammu and Kashmir","Ladakh","Lakshadweep","Puducherry"
-];
-const fallbackCastes = [
-  "General/Unreserved",
-  "Other Backward Classes (OBC)",
-  "Scheduled Caste (SC)",
-  "Scheduled Tribe (ST)",
-  "Economically Weaker Section (EWS)",
-  "Other / Prefer not to say"
-];
-
-(function ensureSelects() {
-  const stateSelect = document.getElementById('stateSelect');
-  // Only add fallbacks if Python didn't populate them (length <= 1 means only the default option exists)
-  if (stateSelect && stateSelect.options.length <= 1) {
-    fallbackStates.forEach(s => {
-      const o = document.createElement('option'); o.value = s; o.text = s; stateSelect.add(o);
-    });
-  }
-  const casteSelect = document.getElementById('casteSelect');
-  if (casteSelect && casteSelect.options.length <= 1) {
-    fallbackCastes.forEach(c => {
-      const o = document.createElement('option'); o.value = c; o.text = c; casteSelect.add(o);
-    });
-  }
-})();
-</script>
+<style>
+  body { background-color: #f8f9fa; }
+  .btn { background:#007bff; color:#fff; border-radius:6px; text-decoration:none; border:none; cursor:pointer; transition: background 0.2s; }
+  .btn:hover { background:#0056b3; }
+</style>
 
 {% endblock %}

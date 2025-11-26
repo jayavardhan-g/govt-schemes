@@ -1,34 +1,15 @@
 {% extends 'base.html' %}
 {% block body %}
 
-{% if is_dashboard %}
-  <div class="dashboard-header">
-    <div class="welcome-msg">
-      <h2>👋 Your Dashboard</h2>
-      <p class="muted">Schemes matched to your saved profile.</p>
-    </div>
-    <div class="dashboard-actions">
-      <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
-      <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
-    </div>
+<div class="dashboard-header">
+  <div class="welcome-msg">
+    <h2>👋 Your Dashboard</h2>
+    <p class="muted">Schemes matched to your saved profile.</p>
   </div>
-{% else %}
-  <div class="dashboard-header" style="background: #e3f2fd; border-color: #bbdefb;">
-    <div class="welcome-msg">
-      <h2>👤 Guest Results</h2>
-      <p class="muted" style="margin-bottom: 5px;">
-        <strong>Showing matches for:</strong> 
-        Age: {{ profile.get('age') }}, 
-        State: {{ profile.get('state') or 'Any' }}, 
-        Occupation: {{ profile.get('occupation') or 'Any' }}
-      </p>
-    </div>
-    <div class="dashboard-actions">
-      <a href="/?mode=manual" class="btn btn-small">🔄 Check Another</a>
-      <a href="/" class="btn btn-outline">🏠 Back to My Dashboard</a>
-    </div>
+  <div class="dashboard-actions">
+    <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
   </div>
-{% endif %}
+</div>
 
 <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
 
@@ -94,7 +75,7 @@
       <tr>
         <td colspan="4" style="padding:30px; text-align:center; color:#666;">
           <h3>No matches found.</h3>
-          <p>Try changing the search criteria (e.g., set Income to 50000 or Occupation to Farmer).</p>
+          <p>Try updating your profile details to see more schemes.</p>
         </td>
       </tr>
     {% endfor %}

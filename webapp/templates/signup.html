@@ -1,12 +1,33 @@
-<!-- signup.html -->
 {% extends 'base.html' %}
 {% block body %}
-<h2>Sign Up</h2>
+
+<div style="text-align: center; margin-bottom: 20px;">
+  <h2>Create Account</h2>
+  <p class="muted">Join to find schemes matching your profile.</p>
+</div>
+
 <form method="post">
-  <label>Name: <input name="name"></label><br>
-  <label>Email: <input name="email" type="email" required></label><br>
-  <label>Phone: <input name="phone"></label><br>
-  <label>Password: <input name="password" type="password" required></label><br>
-  <button type="submit">Create account</button>
+  <label>Name: 
+    <input type="text" name="name" placeholder="Your Full Name" required>
+  </label>
+
+  <label>Email: 
+    <input type="email" name="email" placeholder="name@example.com" required>
+  </label>
+
+  <label>Phone: 
+    <input type="tel" name="phone" placeholder="10-digit mobile number">
+  </label>
+
+  <label>Password: 
+    <input type="password" name="password" placeholder="Create a password" required>
+  </label>
+
+  <button type="submit" style="width: 100%; margin-top: 10px;">Sign Up</button>
+
+  <div style="text-align: center; margin-top: 15px; font-size: 0.9rem;">
+    Already have an account? <a href="/login">Login here</a>
+  </div>
 </form>
+
 {% endblock %}

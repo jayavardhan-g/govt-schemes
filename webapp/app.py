@@ -1,5 +1,7 @@
 # webapp/app.py
 
+import base64
+import json
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 import json
 import os
@@ -109,13 +111,42 @@ def index():
     return render_template('index.html', states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
 
 
+# In webapp/app.py
+
 @app.route('/results')
 def results():
-    # Retrieve data stored in session by the /match route
-    results = session.get('last_results', [])
-    profile = session.get('profile', {})
-    return render_template('results.html', results=results, profile=profile)
+    profile = {}
+    is_dashboard = False
+    
+    # 1. Check for Guest Data in URL (The "data" parameter)
+    encoded_data = request.args.get('data')
+    if encoded_data:
+        try:
+            # Decode: Base64 -> JSON string -> Dict
+            json_str = base64.urlsafe_b64decode(encoded_data).decode()
+            profile = json.loads(json_str)
+            print(f"DEBUG: Decoded Guest Profile: {profile}")
+        except Exception as e:
+            print(f"Error decoding profile: {e}")
+            profile = {}
 
+    # 2. If no URL data, try Logged-in User DB
+    elif session.get('user_id'):
+        user = UserProfile.query.get(session['user_id'])
+        if user and user.profile:
+            profile = user.profile
+            is_dashboard = True
+
+    # 3. Run Matcher
+    if profile:
+        results = evaluate_rules_for_profile(profile)
+    else:
+        results = []
+
+    return render_template('results.html', 
+                           results=results, 
+                           profile=profile, 
+                           is_dashboard=is_dashboard)
 
 @app.route('/profile', methods=['GET', 'POST'])
 def profile():
@@ -205,29 +236,28 @@ def logout():
     return redirect(url_for('index'))
 
 
+# In webapp/app.py
+
 @app.route('/match', methods=['POST'])
 def match():
     profile = extract_profile_from_form(request.form)
-
-    # Logic: Only save to DB if user is logged in AND it's not a temporary manual check
     is_manual_check = request.form.get('is_manual_check') == '1'
 
+    # 1. If Logged In (and not guest mode), save to DB
     if session.get('user_id') and not is_manual_check:
         user = UserProfile.query.get(session['user_id'])
         if user:
             user.profile = profile
             db.session.commit()
+        # Redirect normally (results page will pull from DB)
+        return redirect(url_for('results'))
 
-    try:
-        results = evaluate_rules_for_profile(profile)
-    except TypeError:
-        # Fallback if signature mismatch
-        results = evaluate_rules_for_profile(profile)
-
-    session['last_results'] = results
-    session['profile'] = profile
-    return redirect(url_for('results'))
-
+    # 2. If Guest/Manual Mode, pass data in URL (Bypasses Session)
+    # Encode profile dict -> JSON string -> Base64 string
+    profile_json = json.dumps(profile)
+    profile_b64 = base64.urlsafe_b64encode(profile_json.encode()).decode()
+    
+    return redirect(url_for('results', data=profile_b64))
 
 @app.route('/scheme/<int:scheme_id>')
 def scheme_detail(scheme_id):

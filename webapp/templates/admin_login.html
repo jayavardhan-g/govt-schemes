@@ -1,10 +1,25 @@
-<!-- admin_login.html -->
 {% extends 'base.html' %}
 {% block body %}
-<h1>Admin Login</h1>
+
+<div style="text-align: center; margin-bottom: 20px;">
+  <h2>Admin Login</h2>
+  <p class="muted">Restricted access for administrators only.</p>
+</div>
+
 <form method="post">
-  <label>Username: <input name="username"></label><br>
-  <label>Password: <input type="password" name="password"></label><br>
-  <button type="submit">Login</button>
+  <label>Username: 
+    <input type="text" name="username" placeholder="Enter admin username" required>
+  </label>
+
+  <label>Password: 
+    <input type="password" name="password" placeholder="Enter admin password" required>
+  </label>
+
+  <button type="submit" style="width: 100%; margin-top: 10px;">Login</button>
+  
+  <div style="text-align: center; margin-top: 15px;">
+    <a href="/" style="font-size: 0.9rem;">← Back to Home</a>
+  </div>
 </form>
+
 {% endblock %}
