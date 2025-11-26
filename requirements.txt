@@ -4,3 +4,5 @@ dotenv
 flask_sqlalchemy
 psycopg2
 alembic
+playwright
+bs4

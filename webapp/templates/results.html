@@ -2,20 +2,35 @@
 {% block body %}
 
 {% if is_dashboard %}
-<div class="dashboard-header">
-  <div class="welcome-msg">
-    <h2>Recommended for you</h2>
-    <p class="muted">Based on your saved profile.</p>
+  <div class="dashboard-header">
+    <div class="welcome-msg">
+      <h2>👋 Your Dashboard</h2>
+      <p class="muted">Schemes matched to your saved profile.</p>
+    </div>
+    <div class="dashboard-actions">
+      <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
+      <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
+    </div>
   </div>
-  <div class="dashboard-actions">
-    <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
-    <a href="/?mode=manual" class="btn btn-outline">👤 Check for another person</a>
-  </div>
-</div>
-<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
 {% else %}
-  <h1>Results</h1>
+  <div class="dashboard-header" style="background: #e3f2fd; border-color: #bbdefb;">
+    <div class="welcome-msg">
+      <h2>👤 Guest Results</h2>
+      <p class="muted" style="margin-bottom: 5px;">
+        <strong>Showing matches for:</strong> 
+        Age: {{ profile.get('age') }}, 
+        State: {{ profile.get('state') or 'Any' }}, 
+        Occupation: {{ profile.get('occupation') or 'Any' }}
+      </p>
+    </div>
+    <div class="dashboard-actions">
+      <a href="/?mode=manual" class="btn btn-small">🔄 Check Another</a>
+      <a href="/" class="btn btn-outline">🏠 Back to My Dashboard</a>
+    </div>
+  </div>
 {% endif %}
+
+<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
 
 <div class="controls" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
   <div>
@@ -44,7 +59,7 @@
       <th style="padding:8px 6px;">Scheme</th>
       <th style="padding:8px 6px;">Status</th>
       <th style="padding:8px 6px; cursor:pointer;" id="hdrMatch">Match % ▲▼</th>
-      <th style="padding:8px 6px;">View Details</th>
+      <th style="padding:8px 6px;">Action</th>
     </tr>
   </thead>
   <tbody>
@@ -72,14 +87,14 @@
         </td>
 
         <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">
-          <a href="/scheme/{{ r.scheme_id }}" class="btn small">View</a>
+          <a href="/scheme/{{ r.scheme_id }}" class="btn small">View Details</a>
         </td>
       </tr>
     {% else %}
       <tr>
-        <td colspan="4" style="padding:20px; text-align:center; color:#666;">
-          No schemes found matching your profile yet. <br>
-          <em>(Try updating your profile with more details like Occupation or State)</em>
+        <td colspan="4" style="padding:30px; text-align:center; color:#666;">
+          <h3>No matches found.</h3>
+          <p>Try changing the search criteria (e.g., set Income to 50000 or Occupation to Farmer).</p>
         </td>
       </tr>
     {% endfor %}
@@ -92,21 +107,21 @@
   background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;
 }
 .welcome-msg h2 { margin: 0 0 5px 0; font-size: 1.5rem; }
-.dashboard-actions { display: flex; gap: 10px; }
+.dashboard-actions { display: flex; gap: 10px; align-items: center;}
 .btn-outline { 
   background: white; border: 1px solid #007bff; color: #007bff; 
   padding: 8px 12px; border-radius: 6px; text-decoration: none; font-weight: 600;
 }
 .btn-outline:hover { background: #f0f7ff; }
 
-/* Existing Table Styles */
+/* Common Styles */
 .btn { background:#007bff; color:#fff; padding:6px 10px; border-radius:6px; text-decoration:none; border:none; cursor:pointer; }
 .btn.small { padding:6px 8px; font-size:0.9rem; }
-.badge { color:#fff; padding:4px 8px; border-radius:6px; font-weight:700; display:inline-block; }
+.badge { color:#fff; padding:4px 8px; border-radius:6px; font-weight:700; display:inline-block; font-size: 0.85rem;}
 .progress-row { display:flex; align-items:center; gap:8px; }
 .progress-bg { width:160px; height:12px; background:#f1f1f1; border-radius:8px; overflow:hidden; }
 .progress-fill { height:12px; width:0%; transition:width .4s ease; }
-.progress-text { min-width:48px; font-weight:600; color:#222; }
+.progress-text { min-width:48px; font-weight:600; color:#222; font-size: 0.9rem;}
 .progress-fill.green { background:linear-gradient(90deg,#6bc16b,#2fa84f); }
 .progress-fill.yellow { background:linear-gradient(90deg,#f7c76b,#f0ad4e); }
 .progress-fill.red { background:linear-gradient(90deg,#f18a8a,#d9534f); }
@@ -159,14 +174,10 @@
     });
   }
 
-  sortBtn.addEventListener('click', () => {
-    sortDesc = !sortDesc;
-    sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc';
-    sortRows();
-  });
-  hdrMatch.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
-  filterStatus.addEventListener('change', applyFilters);
-  searchBox.addEventListener('input', applyFilters);
+  if(sortBtn) sortBtn.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(hdrMatch) hdrMatch.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(filterStatus) filterStatus.addEventListener('change', applyFilters);
+  if(searchBox) searchBox.addEventListener('input', applyFilters);
 
   colorizeRows();
   sortRows();

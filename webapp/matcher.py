@@ -1,174 +1,163 @@
 # webapp/matcher.py
-import os
 import json
 from db import db
 from models import Scheme, SchemeRule
 
-# Behavior:
-# - For 'all' rules:
-#     * If any non-skipped atom explicitly FAILS -> rule score = 0.0 (Not Eligible)
-#     * Else score = passed_count / total_atoms  (skipped atoms count in denominator, preventing 100%)
-# - For 'any' rules:
-#     * If at least one non-skipped atom passes -> candidate passes; score = passed_count / total_atoms
-#     * If none pass -> score = 0.0
-# - Detailed per-atom evaluations are returned for UI/inspection.
-
-def _normalize_user_val(user_val):
-    """Normalize empty strings to None and return trimmed values."""
-    if user_val is None:
-        return None
-    if isinstance(user_val, str):
-        u = user_val.strip()
-        if u == '':
-            return None
-        return u
-    return user_val
-
-
-def _atomic_check(atom, profile):
+# ==========================================
+# PART 1: Friend's Matching Logic (UPDATED)
+# ==========================================
+class MatchingEngine:
     """
-    Evaluate a single atomic rule.
-    Returns a tuple: (status, msg, skipped)
-      - status: True (pass) or False (fail) or None (skipped)
-      - msg: human readable message
-      - skipped: True if this atom was skipped due to missing profile field
+    Evaluate rule AST against a profile. 
+    UPDATED: Treats missing fields as 'Skipped' (Neutral) instead of 'Failed'.
     """
-    field = atom.get('field')
-    op = atom.get('op')
-    value = atom.get('value')
 
-    user_val = profile.get(field)
-    user_val = _normalize_user_val(user_val)
-
-    if user_val is None:
-        # Missing field -> mark as skipped (we will still count it in total for 'all')
-        return None, f"field '{field}' missing in profile -> SKIPPED", True
-
-    # Numeric comparisons
-    if op in ('<', '<=', '>', '>='):
+    def _safe_cast_number(self, v):
+        if v is None: return None
+        if isinstance(v, (int, float)): return v
+        s = str(v).replace(',', '').strip()
         try:
-            uv = float(user_val)
-            vv = float(value)
-        except Exception:
-            return False, f"numeric comparison failed for field '{field}' (user='{user_val}', rule='{value}')", False
-        if op == '<':
-            return (uv < vv), f"{uv} < {vv}", False
-        if op == '<=':
-            return (uv <= vv), f"{uv} <= {vv}", False
-        if op == '>':
-            return (uv > vv), f"{uv} > {vv}", False
-        if op == '>=':
-            return (uv >= vv), f"{uv} >= {vv}", False
+            if '.' in s: return float(s)
+            return int(s)
+        except ValueError:
+            try: return float(s)
+            except ValueError: return None
 
-    # Equality
-    if op == '==':
-        passed = str(user_val).strip().lower() == str(value).strip().lower()
-        return passed, (f"{user_val} == {value}" if passed else f"{user_val} != {value}"), False
+    def _evaluate_rule(self, profile: dict, rule: dict) -> dict:
+        field = rule.get('field')
+        op = rule.get('op')
+        value = rule.get('value')
 
-    # Membership: support list membership with case-insensitive & substring matching
-    if op == 'in':
-        vals = value if isinstance(value, (list, tuple, set)) else [value]
-        u = str(user_val).strip().lower()
-        for v in vals:
-            vs = str(v).strip().lower()
-            if vs == u:
-                return True, f"'{user_val}' equals '{v}'", False
-            if vs in u:
-                return True, f"'{v}' substring-match in '{user_val}'", False
-        return False, f"'{user_val}' not in {vals}", False
+        profile_value = profile.get(field)
 
-    # Unknown operator
-    return False, f"unknown operator '{op}'", False
+        # --- FIX: Handle Missing Field as NEUTRAL, not FAILURE ---
+        if profile_value is None:
+            status = None  # Changed from False to None
+            explanation = f"SKIPPED: Profile missing field '{field}'."
+            # We return skipped=True so the UI knows to show it as gray/neutral
+            return {"rule": f"{field} {op} {value}", "status": None, "profile_value": None, "explanation": explanation, "skipped": True}
 
+        # Numeric comparisons
+        if op in (">", "<", ">=", "<="):
+            rule_num = self._safe_cast_number(value)
+            prof_num = self._safe_cast_number(profile_value)
+            
+            if rule_num is None or prof_num is None:
+                status = False
+                explanation = f"FAIL: Non-numeric values for '{field}'."
+            else:
+                if op == ">": status = prof_num > rule_num
+                elif op == "<": status = prof_num < rule_num
+                elif op == ">=": status = prof_num >= rule_num
+                elif op == "<=": status = prof_num <= rule_num
+                else: status = False
+                explanation = f"{'PASS' if status else 'FAIL'}: {field} ({prof_num}) {op} {rule_num}."
+            
+            return {"rule": f"{field} {op} {value}", "status": status, "profile_value": profile_value, "explanation": explanation, "skipped": False}
+
+        # Categorical (In / Not In)
+        if op in ("in", "not_in"):
+            if isinstance(profile_value, list):
+                prof_values = [str(x).lower() for x in profile_value]
+            else:
+                prof_values = [str(profile_value).lower()]
+
+            if isinstance(value, list):
+                rule_values = [str(x).lower() for x in value]
+            else:
+                rule_values = [str(value).lower()]
+
+            if op == "in":
+                status = any(pv in rule_values for pv in prof_values)
+                explanation = f"{'PASS' if status else 'FAIL'}: {field} ({profile_value}) {'in' if status else 'not in'} {value}."
+            else:  # not_in
+                status = not any(pv in rule_values for pv in prof_values)
+                explanation = f"{'PASS' if status else 'FAIL'}: {field} ({profile_value}) exclusion check."
+
+            return {"rule": f"{field} {op} {value}", "status": status, "profile_value": profile_value, "explanation": explanation, "skipped": False}
+
+        # Equality
+        if op == "==":
+            if isinstance(value, bool):
+                status = bool(profile_value) == value
+            else:
+                status = str(profile_value).lower() == str(value).lower()
+            
+            explanation = f"{'PASS' if status else 'FAIL'}: {field} matches {value}."
+            return {"rule": f"{field} {op} {value}", "status": status, "profile_value": profile_value, "explanation": explanation, "skipped": False}
+
+        if op == "!=":
+            status = str(profile_value).lower() != str(value).lower()
+            explanation = f"{'PASS' if status else 'FAIL'}: {field} does not match {value}."
+            return {"rule": f"{field} {op} {value}", "status": status, "profile_value": profile_value, "explanation": explanation, "skipped": False}
+
+        return {"rule": f"{field} {op} {value}", "status": False, "profile_value": profile_value, "explanation": f"Unknown op {op}", "skipped": False}
+
+    def evaluate(self, profile: dict, rule_ast: dict) -> tuple:
+        """
+        Returns (final_eligibility_bool, score_float, outcomes_list)
+        """
+        if 'any' in rule_ast:
+             rules_list = rule_ast.get("any", [])
+             mode = 'any'
+        else:
+             rules_list = rule_ast.get("all", [])
+             mode = 'all'
+
+        total_rules = len(rules_list)
+        passing_rules = 0
+        failed_rules = 0  # Track explicit failures
+        outcomes = []
+
+        if total_rules == 0:
+            return False, 0.0, [{"error": "Empty rule set"}]
+
+        for r in rules_list:
+            out = self._evaluate_rule(profile, r)
+            out['atom'] = r 
+            out['msg'] = out['explanation']
+            outcomes.append(out)
+            
+            if out['skipped']:
+                continue # Don't count as pass OR fail
+            
+            if out['status']:
+                passing_rules += 1
+            else:
+                failed_rules += 1
+
+        # --- SCORE CALCULATION ---
+        # Score = Passed / Total. 
+        # Note: Skipped items lower the score (preventing 100%), but they don't cause 0%.
+        score = passing_rules / total_rules if total_rules > 0 else 0.0
+        
+        # --- FINAL DETERMINATION ---
+        if mode == 'any':
+            # Eligible if at least one passed
+            final_eligibility = (passing_rules > 0)
+        else: # mode == 'all'
+            # Eligible if NOTHING EXPLICITLY FAILED.
+            # If failed_rules > 0, they are definitely not eligible.
+            # If failed_rules == 0 but skipped > 0, they are "Maybe Eligible" (which we treat as True here, handled by UI label)
+            final_eligibility = (failed_rules == 0)
+
+        return final_eligibility, score, outcomes
+
+
+# ==========================================
+# PART 2: Database Integration
+# ==========================================
+
+engine = MatchingEngine()
 
 def evaluate_rule_with_details(rule, profile):
-    """
-    Evaluate a rule and return tuple:
-      (passed_bool, score_float_in_0_1, details_list)
-
-    details_list contains dicts:
-      { 'atom': <atom>, 'status': True/False/None, 'msg': <str>, 'skipped': True/False }
-    """
-    if rule is None:
-        return False, 0.0, [{"error": "no rule provided"}]
-
-    # handle 'all'
-    if 'all' in rule:
-        atoms = rule['all']
-        details = []
-        passed_count = 0
-        failed_count = 0
-        total = len(atoms) if isinstance(atoms, (list, tuple)) else 0
-        if total == 0:
-            return False, 0.0, [{"error": "empty 'all' clause"}]
-
-        for atom in atoms:
-            status, msg, skipped = _atomic_check(atom, profile)
-            details.append({'atom': atom, 'status': status, 'msg': msg, 'skipped': bool(skipped)})
-            if status:
-                passed_count += 1
-            elif status is False:
-                failed_count += 1
-            # skipped -> neither passed nor failed_count incremented
-
-        # If any non-skipped atom explicitly failed -> hard fail -> score 0
-        if failed_count > 0:
-            return False, 0.0, details
-
-        # No failures among provided inputs. Score uses total atoms (skipped counted),
-        # so missing fields reduce the percent and prevent 100% unless all atoms actually passed.
-        score = passed_count / total if total > 0 else 0.0
-        passed = (passed_count == total)  # true only if every atom passed (no skips, no fails)
+    try:
+        passed, score, details = engine.evaluate(profile, rule)
         return passed, score, details
-
-    # handle 'any'
-    if 'any' in rule:
-        atoms = rule['any']
-        details = []
-        passed_count = 0
-        total = len(atoms) if isinstance(atoms, (list, tuple)) else 0
-        if total == 0:
-            return False, 0.0, [{"error": "empty 'any' clause"}]
-
-        for atom in atoms:
-            status, msg, skipped = _atomic_check(atom, profile)
-            details.append({'atom': atom, 'status': status, 'msg': msg, 'skipped': bool(skipped)})
-            if status:
-                passed_count += 1
-            # skipped counts toward total but not passed_count
-
-        passed_any = passed_count >= 1
-        # Score reflects fraction of atoms that passed among total atoms (skips lower fraction)
-        score = passed_count / total if total > 0 else 0.0
-        return passed_any, score, details
-
-    # atomic single rule
-    status, msg, skipped = _atomic_check(rule, profile)
-    if skipped:
-        # missing -> treat as not passed (and counts toward denominator externally)
-        return False, 0.0, [{'atom': rule, 'status': None, 'msg': msg, 'skipped': True}]
-    # direct atomic pass/fail
-    return bool(status), (1.0 if status else 0.0), [{'atom': rule, 'status': bool(status), 'msg': msg, 'skipped': False}]
-
-
-def evaluate_rule(rule, profile):
-    """
-    Backwards-compatible boolean API (returns True if rule passes).
-    """
-    passed, score, details = evaluate_rule_with_details(rule, profile)
-    return bool(passed)
-
+    except Exception as e:
+        return False, 0.0, [{'error': str(e)}]
 
 def evaluate_rules_for_profile(profile):
-    """
-    Returns list of results for all schemes using SQLAlchemy models.
-
-    Each result contains:
-      - scheme_id, title, description
-      - result: one of 'Eligible', 'Maybe Eligible', 'Not Eligible'
-      - score: percent (0..100 float)
-      - reasons: detailed dict including 'evaluations' (atoms), 'snippet', 'parser_confidence', etc.
-    """
     schemes = Scheme.query.order_by(Scheme.title).all()
     results = []
 
@@ -177,14 +166,15 @@ def evaluate_rules_for_profile(profile):
         best_score = -1.0
         best_passed = False
         best_details = {'note': 'No rule available'}
-        # Evaluate every rule and pick the one with highest score (prefer higher completeness)
+
         if rules:
             for r in rules:
                 try:
                     rule_obj = r.rule_json
                     passed, score, details = evaluate_rule_with_details(rule_obj, profile)
-                    # choose best by raw score; if equal prefer passed==True
-                    if score > best_score or (score == best_score and passed and not best_passed):
+                    
+                    # We prefer the rule that gives the HIGHEST score
+                    if score > best_score:
                         best_score = score
                         best_passed = passed
                         best_details = {
@@ -196,36 +186,44 @@ def evaluate_rules_for_profile(profile):
                 except Exception as e:
                     best_details = {'error': str(e)}
         else:
-            best_details = {'note': 'No rule available'}
-            best_score = 0.0
-            best_passed = False
-
-        # Normalize best_score if never set
-        if best_score < 0:
             best_score = 0.0
 
-        # Determine result label:
-        # - If score == 0.0 -> Not Eligible
-        # - If score == 1.0 -> Eligible (all atoms present and passed)
-        # - Else -> Maybe Eligible (partial match / missing fields)
+        if best_score < 0: best_score = 0.0
         score_percent = float(best_score) * 100.0
 
-        if best_score <= 0.0:
-            label = 'Not Eligible'
+        # --- LABEL LOGIC ---
+        skipped_any = False
+        failed_any = False
+        
+        if 'evaluations' in best_details and isinstance(best_details['evaluations'], list):
+             skipped_any = any(d.get('skipped') for d in best_details['evaluations'])
+             failed_any = any(d.get('status') is False for d in best_details['evaluations'])
+
+        if failed_any:
+            label = 'Not Eligible' # Explicit failure
         elif best_score >= 1.0:
-            label = 'Eligible'
+            label = 'Eligible' # 100% match, nothing skipped
+        elif skipped_any and not failed_any:
+            label = 'Maybe Eligible' # No failures, but missing data
         else:
-            label = 'Maybe Eligible'
+            label = 'Not Eligible' # Fallback
 
         results.append({
             'scheme_id': s.id,
             'title': s.title,
             'description': s.description,
             'result': label,
-            'score': round(score_percent, 2),   # percent with two decimals
+            'score': round(score_percent, 2),
             'reasons': best_details
         })
 
-    # sort: higher score first, then title
     results = sorted(results, key=lambda x: (-x['score'], x['title']))
     return results
+
+
+def evaluate_rule(rule, profile):
+    """
+    Backwards-compatible boolean API (returns True if rule passes).
+    """
+    passed, score, details = evaluate_rule_with_details(rule, profile)
+    return bool(passed)
