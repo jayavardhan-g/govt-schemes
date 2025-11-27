@@ -5,12 +5,12 @@
 <table>
   <thead><tr><th>ID</th><th>Title</th><th>Has Rule</th><th>Confidence</th><th>Action</th></tr></thead>
   <tbody>
-  {% for s in schemes %}
+  {% for schemes in schemes %}
     <tr>
-      <td>{{ s.id }}</td>
-      <td>{{ s.title }}</td>
-      <td>{{ s.has_rule }}</td>
-      <td>{{ s.confidence }}</td>
+      <td>{{ scheme.id }}</td>
+      <td>{{ scheme.title }}</td>
+      <td>{{ scheme.has_rule }}</td>
+      <td>{{ scheme.confidence }}</td>
       <td><a href="/admin/verify/{{ s.id }}">Verify</a></td>
     </tr>
   {% endfor %}

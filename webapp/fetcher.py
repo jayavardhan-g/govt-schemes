@@ -7,9 +7,9 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-script_dir = Path(__file__).resolve().parent
-seed_csv = script_dir / "seedurls.csv"
-OUT_DIR = script_dir / "output" / "raw_html"
+script_folder = Path(__file__).resolve().parent
+seed_csv = script_folder / "seedurls.csv"
+OUT_DIR = script_folder / "output" / "raw_html"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 NAV_TIMEOUT_MS = 45_000
 WAIT_AFTER_NETWORK_IDLE_S = 1.0

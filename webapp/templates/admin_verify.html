@@ -3,9 +3,9 @@
 {% block body %}
 <h1>Verify Scheme: {{ scheme.title }}</h1>
 <form method="post">
-  <label>Snippet (editable):<br>
+  <label>Snippet <br>
   <textarea name="snippet" rows="5" cols="80">{{ snippet }}</textarea></label><br>
-  <label>Rule JSON:<br>
+  <label>Rules JSON:<br>
   <textarea name="rule_json" rows="15" cols="80">{{ rule_json }}</textarea></label><br>
   <button type="submit">Save</button>
 </form>
