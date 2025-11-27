@@ -1,9 +1,12 @@
-# webapp/app.py
+#!/usr/bin/env python3
+"""
+Main Flask application for Government Schemes Matcher.
+Handles user authentication, profile management, scheme matching, and admin verification.
+"""
 
 import base64
 import json
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
-import json
 import os
 import traceback
 from functools import wraps
@@ -13,24 +16,30 @@ from datetime import datetime
 
 load_dotenv()
 
-# SQLAlchemy init
+# Database layer and initialization
 from db import init_db, db
-# sample_data uses SQLAlchemy
+# Loads sample data on first run
 from sample_data import ensure_sample_data
-# matcher uses SQLAlchemy
+# Core matching logic that evaluates eligibility rules
 from matcher import evaluate_rules_for_profile, evaluate_rule, evaluate_rule_with_details
 
-# ORM models
+# Data models for schemes, users, and matching results
 from models import Scheme, SchemeRule, UserProfile, MatchResult
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "dev-secret-for-demo")
 
-# Initialize DB (Postgres) via SQLAlchemy and ensure sample data
+# # DEBUG: Log Flask app configuration
+# print(f"[DEBUG] Flask app initialized with secret key: {app.secret_key[:10]}...")
+
+# Set up database connection and populate with initial scheme data if empty
 init_db(app)
 with app.app_context():
-    # If the database tables are new or were dropped, this will populate them.
+    # Auto-seed database with scraped scheme data on first run
     ensure_sample_data()
+    # # DEBUG: Verify database initialization
+    # scheme_count = Scheme.query.count()
+    # print(f"[DEBUG] Database initialized with {scheme_count} schemes")
 
 INDIAN_STATES_AND_UT = [
     "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa",
@@ -51,22 +60,33 @@ CASTE_CATEGORIES = [
     "Other / Prefer not to say"
 ]
 
-# ---------------- Helpers ----------------
+# ===== UTILITY FUNCTIONS FOR FORM DATA CONVERSION =====
 
 def _to_int_or_none(v):
+    """Safely convert form input to integer, returns None if invalid or empty."""
     try:
-        if v is None or v == '': return None
+        if v is None or v == '': 
+            return None
         return int(v)
-    except ValueError: return None
+    except ValueError: 
+        # # DEBUG: Uncomment to trace conversion failures
+        # print(f"[DEBUG] Failed to convert '{v}' to int")
+        return None
 
 def _to_float_or_none(v):
+    """Safely convert form input to float, returns None if invalid or empty."""
     try:
-        if v is None or v == '': return None
+        if v is None or v == '': 
+            return None
         return float(v)
-    except ValueError: return None
+    except ValueError: 
+        # # DEBUG: Uncomment to trace conversion failures
+        # print(f"[DEBUG] Failed to convert '{v}' to float")
+        return None
 
 def extract_profile_from_form(req_form):
-    return {
+    """Parse form submission into user profile dict with proper type conversion."""
+    profile = {
         'age': _to_int_or_none(req_form.get('age')),
         'income': _to_float_or_none(req_form.get('income')),
         'gender': (req_form.get('gender') or None),
@@ -76,13 +96,19 @@ def extract_profile_from_form(req_form):
         'disability': (req_form.get('disability') or None),
         'household_size': _to_int_or_none(req_form.get('household_size')) or 1
     }
+    # # DEBUG: Verify profile extraction
+    # print(f"[DEBUG] Extracted profile: {profile}")
+    return profile
 
-# ---------------- Routes ----------------
+# ===== ROUTE HANDLERS =====
 
 @app.route('/')
 def index():
-    # 1. Check if "Check for another person" was clicked (Manual Mode)
+    """Landing page - routes to guest form, manual mode, or logged-in dashboard."""
+    # Guest checking schemes for someone else (no data saved)
     if request.args.get('mode') == 'manual':
+        # # DEBUG: Manual mode entry
+        # print("[DEBUG] User entered manual mode")
         return render_template('index.html', 
                                states=INDIAN_STATES_AND_UT, 
                                castes=CASTE_CATEGORIES,
@@ -90,15 +116,19 @@ def index():
 
     user_id = session.get('user_id')
     
-    # 2. Logged-in User Logic
+    # Returning logged-in user - show their saved results
     if user_id:
         user = UserProfile.query.get(user_id)
+        # # DEBUG: Check if user exists in DB
+        # print(f"[DEBUG] User {user_id} lookup: {user}")
         
         if user and user.profile:
-            # Sync the session profile with the DB profile so Details page matches Homepage
+            # Keep profile in session so scheme detail page can access it
             session['profile'] = user.profile 
 
             results = evaluate_rules_for_profile(user.profile)
+            # # DEBUG: Log matched schemes
+            # print(f"[DEBUG] Generated {len(results)} scheme matches")
             return render_template('results.html', 
                                    results=results, 
                                    profile=user.profile, 
@@ -107,39 +137,46 @@ def index():
             flash("Welcome! Please complete your profile to see eligible schemes.")
             return redirect(url_for('profile'))
 
-    # 3. Guest User (Standard Form)
+    # First-time visitor - show standard form
     return render_template('index.html', states=INDIAN_STATES_AND_UT, castes=CASTE_CATEGORIES)
 
 
-# In webapp/app.py
+# ===== RESULTS PAGE =====
 
 @app.route('/results')
 def results():
+    """Display matching schemes - supports both guest (URL-encoded) and logged-in users."""
     profile = {}
     is_dashboard = False
     
-    # 1. Check for Guest Data in URL (The "data" parameter)
+    # Try to get profile from URL parameter (guest mode with encoded data)
     encoded_data = request.args.get('data')
     if encoded_data:
         try:
-            # Decode: Base64 -> JSON string -> Dict
+            # Reverse the encoding: Base64 -> JSON string -> Dict
             json_str = base64.urlsafe_b64decode(encoded_data).decode()
             profile = json.loads(json_str)
-            print(f"DEBUG: Decoded Guest Profile: {profile}")
+            # # DEBUG: Verify profile decoding
+            # print(f"[DEBUG] Decoded guest profile from URL: age={profile.get('age')}, state={profile.get('state')}")
         except Exception as e:
-            print(f"Error decoding profile: {e}")
+            # # DEBUG: Log decoding failures
+            # print(f"[ERROR] Failed to decode profile from URL: {e}")
             profile = {}
 
-    # 2. If no URL data, try Logged-in User DB
+    # Fallback: get profile from database (logged-in user)
     elif session.get('user_id'):
         user = UserProfile.query.get(session['user_id'])
         if user and user.profile:
             profile = user.profile
             is_dashboard = True
+            # # DEBUG: Confirm database profile loaded
+            # print(f"[DEBUG] Loaded profile for user {session['user_id']} from database")
 
-    # 3. Run Matcher
+    # Run matching engine if we have profile data
     if profile:
         results = evaluate_rules_for_profile(profile)
+        # # DEBUG: Report matching results
+        # print(f"[DEBUG] Matching completed: {len(results)} schemes evaluated")
     else:
         results = []
 
@@ -150,23 +187,27 @@ def results():
 
 @app.route('/profile', methods=['GET', 'POST'])
 def profile():
-    # 1. Check if session has a user_id
+    """User profile editor - requires authentication."""
+    # Auth check: ensure user is logged in
     if not session.get('user_id'):
         flash('Please login to edit your profile')
         return redirect(url_for('login'))
     
     user = UserProfile.query.get(session['user_id'])
     
-    # Handle "Ghost" Sessions (if DB was reset but session remains)
+    # Handle stale session (user exists in session but not in database)
     if user is None:
         session.pop('user_id', None)
         flash('Session expired or invalid. Please login again.')
         return redirect(url_for('login'))
     
     if request.method == 'POST':
+        # User submitted profile form
         new_profile_data = extract_profile_from_form(request.form)
         user.profile = new_profile_data
         db.session.commit()
+        # # DEBUG: Confirm profile save
+        # print(f"[DEBUG] Profile updated for user {user.id}: {new_profile_data}")
         flash('Profile updated successfully!')
         return redirect(url_for('index'))
         
@@ -178,6 +219,7 @@ def profile():
 
 @app.route('/signup', methods=['GET','POST'])
 def signup():
+    """User registration - creates new account."""
     if request.method == 'POST':
         name = request.form.get('name')
         email = request.form.get('email')
@@ -188,17 +230,22 @@ def signup():
             flash('Email and password are required')
             return redirect(url_for('signup'))
 
-        # check if user exists
+        # Prevent duplicate accounts
         existing = UserProfile.query.filter_by(email=email).first()
         if existing:
+            # # DEBUG: Log duplicate signup attempt
+            # print(f"[DEBUG] Signup attempt with existing email: {email}")
             flash('An account with that email already exists')
             return redirect(url_for('signup'))
 
-        # Create user
+        # Hash password and create user record
         pw_hash = generate_password_hash(password)
         user = UserProfile(email=email, password_hash=pw_hash, name=name, phone=phone, profile={})
         db.session.add(user)
         db.session.commit()
+        
+        # # DEBUG: Confirm user creation
+        # print(f"[DEBUG] New user created: {user.id} ({email})")
         
         session['user_id'] = user.id
         
@@ -210,22 +257,37 @@ def signup():
 
 @app.route('/login', methods=['GET','POST'])
 def login():
+    """User authentication - creates session."""
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
+        
         if not email or not password:
             flash('Email and password required')
             return redirect(url_for('login'))
+        
+        # Lookup user by email
         user = UserProfile.query.filter_by(email=email).first()
         if not user or not user.password_hash:
+            # # DEBUG: Log failed login attempt
+            # print(f"[DEBUG] Login failed: user not found or no password hash for {email}")
             flash('Invalid credentials')
             return redirect(url_for('login'))
+        
+        # Verify password
         if not check_password_hash(user.password_hash, password):
+            # # DEBUG: Log password mismatch
+            # print(f"[DEBUG] Login failed: incorrect password for {email}")
             flash('Invalid credentials')
             return redirect(url_for('login'))
+        
+        # Create session
         session['user_id'] = user.id
+        # # DEBUG: Confirm successful login
+        # print(f"[DEBUG] User {user.id} logged in from {email}")
         flash('Logged in')
         return redirect(url_for('index'))
+    
     return render_template('login.html')
 
 
@@ -236,26 +298,31 @@ def logout():
     return redirect(url_for('index'))
 
 
-# In webapp/app.py
+# ===== PROFILE MATCHING =====
 
 @app.route('/match', methods=['POST'])
 def match():
+    """Process profile submission and route to results."""
     profile = extract_profile_from_form(request.form)
     is_manual_check = request.form.get('is_manual_check') == '1'
 
-    # 1. If Logged In (and not guest mode), save to DB
+    # Logged-in user: save profile to database
     if session.get('user_id') and not is_manual_check:
         user = UserProfile.query.get(session['user_id'])
         if user:
             user.profile = profile
             db.session.commit()
-        # Redirect normally (results page will pull from DB)
+            # # DEBUG: Confirm profile save
+            # print(f"[DEBUG] Profile saved to DB for user {user.id}")
+        # Results page will pull from database
         return redirect(url_for('results'))
 
-    # 2. If Guest/Manual Mode, pass data in URL (Bypasses Session)
-    # Encode profile dict -> JSON string -> Base64 string
+    # Guest/Manual mode: encode profile in URL to avoid session dependency
+    # Convert profile dict -> JSON string -> Base64 string for URL transport
     profile_json = json.dumps(profile)
     profile_b64 = base64.urlsafe_b64encode(profile_json.encode()).decode()
+    # # DEBUG: Check URL encoding
+    # print(f"[DEBUG] Guest profile encoded to {len(profile_b64)} byte URL")
     
     return redirect(url_for('results', data=profile_b64))
 

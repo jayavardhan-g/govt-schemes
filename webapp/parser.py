@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-- Scans output/raw_html/ for .html files
-- Parses each HTML to extract title, eligibility description, and state
+HTML parsing module for government scheme websites.
+
+Scans output/raw_html/ for .html files and extracts:
+- Scheme title
+- Eligibility criteria/description
+- Geographic state (if detectable)
+
+Uses BeautifulSoup with heuristics to identify eligibility sections.
+Outputs parsed data as Python module for database seeding.
 """
 
 import os
@@ -11,23 +18,27 @@ import hashlib
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
+# ===== CONFIGURATION =====
+
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_HTML_DIR = os.path.join(SCRIPT_DIR, "output", "raw_html")
 SEED_CSV = os.path.join(SCRIPT_DIR, "seedurls.csv")
 OUTPUT_PY = os.path.join(SCRIPT_DIR, "output", "sample_schemes.py")
 
-# Keywords / heuristics
+# Keywords to identify eligibility sections in HTML
 HEADING_KEYWORDS = [
     "eligibility", "eligibility criteria", "who can apply", "who is eligible",
     "conditions for eligibility", "eligible", "applicants"
 ]
 
+# Fallback keywords for when structured headings aren't found
 FALLBACK_KEYWORDS = [
     "eligible", "not eligible", "income", "annual income", "age", "years", "resident",
     "citizen", "widow", "women", "household", "beneficiary", "ownership", "landholding", "student"
 ]
 
+# List of Indian states for geographic detection
 STATES = [
     "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh",
     "Goa","Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka",
@@ -39,6 +50,7 @@ STATES = [
 
 
 def url_to_filename(url: str) -> str:
+    """Convert URL to filesystem-safe key (matching fetcher.py output)."""
     parsed = urlparse(url)
     domain = parsed.netloc.replace(":", "_")
     path_part = parsed.path.strip("/").replace("/", "_") or "index"
@@ -50,16 +62,17 @@ def url_to_filename(url: str) -> str:
 
 def load_seed_map(csv_path=SEED_CSV):
     """
-    Return dict: url_key -> url for entries in seedurls.csv.
-    If seed file missing, return empty dict.
+    Load URL mapping from seedurls.csv for linking HTML files back to original URLs.
+    Returns dict mapping filename -> URL.
     """
     mapping = {}
     if not os.path.exists(csv_path):
+        print(f"Warning: Seed file not found at {csv_path}")
         return mapping
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # accept 'url' header or first column fallback
+            # Accept 'url' header or first column fallback
             url = ""
             if "url" in row and row["url"].strip():
                 url = row["url"].strip()
@@ -74,6 +87,7 @@ def load_seed_map(csv_path=SEED_CSV):
 
 
 def read_html(path):
+    """Read HTML file safely, returning None if failed."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
@@ -82,16 +96,22 @@ def read_html(path):
 
 
 def clean_text(s):
+    """Normalize text: fix line endings, remove special bullets, collapse whitespace."""
     if not s:
         return ""
+    # Normalize line endings
     s = re.sub(r"\r\n?", "\n", s)
+    # Replace bullet characters with dashes
     s = re.sub(r"\u2022|\u2023|\u25E6|\u2043|\u2219", "-", s)
+    # Collapse multiple blank lines
     s = re.sub(r"\n\s*\n+", "\n", s)
+    # Collapse multiple spaces
     s = re.sub(r"[ \t]+", " ", s)
     return s.strip()
 
 
 def extract_title(soup, fallback):
+    """Extract page title from <title>, <h1>, or use fallback."""
     tag = soup.find("title")
     if tag and tag.get_text(strip=True):
         return tag.get_text(strip=True)
@@ -102,6 +122,7 @@ def extract_title(soup, fallback):
 
 
 def find_heading_candidates(soup):
+    """Find heading tags that mention eligibility."""
     heads = []
     for level in ["h1", "h2", "h3", "h4", "strong", "b"]:
         for tag in soup.find_all(level):
@@ -114,8 +135,10 @@ def find_heading_candidates(soup):
 
 
 def extract_block_after_heading(tag):
+    """Extract text block following a heading until next heading."""
     parts = []
     for sib in tag.find_next_siblings():
+        # Stop at next heading
         if sib.name and re.match(r"h[1-4]", sib.name, re.I):
             break
         if sib.name in ("p", "div", "ul", "ol", "table", "dl"):
@@ -128,6 +151,7 @@ def extract_block_after_heading(tag):
 
 
 def fallback_search_for_eligibility(soup):
+    """Search for eligibility keywords as fallback extraction method."""
     candidates = []
     nodes = soup.find_all(["p", "li", "div", "td"])
     for node in nodes:
@@ -140,11 +164,14 @@ def fallback_search_for_eligibility(soup):
 
 
 def detect_state(text):
+    """Detect state from text using keyword matching."""
     if not text:
         return ""
+    # Try exact state name match
     for s in STATES:
         if s.lower() in text.lower():
             return s
+    # Try matching first word of state names
     tokens = re.findall(r"\b[A-Za-z]+\b", text)
     for tok in tokens:
         for s in STATES:
@@ -154,6 +181,7 @@ def detect_state(text):
 
 
 def build_entry(title, description, state, source_url):
+    """Build a scheme entry dict with safety checks."""
     return {
         "title": title if title is not None else "",
         "description": description if description is not None else "",
@@ -163,8 +191,11 @@ def build_entry(title, description, state, source_url):
 
 
 def write_output_py(entries, out_path=OUTPUT_PY):
+    """Write parsed entries as Python module for database seeding."""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
+        f.write("# Auto-generated scheme data from web scraping\n")
+        f.write("# # DEBUG: Verify this data looks correct before database import\n")
         f.write("SAMPLE_SCHEMES = [\n")
         for e in entries:
             title = repr(e["title"])
@@ -177,7 +208,8 @@ def write_output_py(entries, out_path=OUTPUT_PY):
 
 
 def parse_all_html():
-    # load url_key -> url map from seed list (optional)
+    """Main parsing pipeline: read HTML files and extract scheme data."""
+    # Load URL mapping for scheme source links
     seed_map = load_seed_map()
 
     if not os.path.isdir(RAW_HTML_DIR):
@@ -185,6 +217,7 @@ def parse_all_html():
         write_output_py([])
         return
 
+    # Get all HTML files sorted for consistent output
     files = sorted(f for f in os.listdir(RAW_HTML_DIR) if f.lower().endswith(".html"))
     if not files:
         print("No .html files found under raw_html.")
@@ -197,12 +230,15 @@ def parse_all_html():
         html = read_html(path)
         if not html:
             print(f"[skip] could not read: {fname}")
+            # # DEBUG: Log read failures
+            # print(f"[DEBUG] Failed to read {path}")
             continue
+        
         soup = BeautifulSoup(html, "html.parser")
-        fallback_name = os.path.splitext(fname)[0]  # this is the url_key produced by fetcher
+        fallback_name = os.path.splitext(fname)[0]  # This is the url_key from fetcher
         title = extract_title(soup, fallback_name)
 
-        # heading-first extraction
+        # Try structured heading-based extraction first
         description = ""
         heading_tags = find_heading_candidates(soup)
         if heading_tags:
@@ -212,19 +248,23 @@ def parse_all_html():
                     description = blk
                     break
 
+        # Fall back to keyword search if structured extraction didn't work
         if not description:
             description = fallback_search_for_eligibility(soup)
 
+        # Clean up extracted text
         description = clean_text(description)
+        # Detect state from combined title and description
         state = detect_state(" ".join([title, description]))
 
-        # try to find source_url via seed map using url_key (filename without .html)
+        # Try to find source URL via seed map
         url_key = os.path.splitext(fname)[0]
         source_url = seed_map.get(url_key, "")
 
         entries.append(build_entry(title=title, description=description, state=state, source_url=source_url))
         print(f"[ok] parsed {fname} -> title: {title} (state='{state}')")
 
+    # Write final output for database import
     write_output_py(entries)
 
 

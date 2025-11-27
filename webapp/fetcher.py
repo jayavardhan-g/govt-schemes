@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-fetcher.py
+Web fetcher module for government scheme websites.
 
-- Reads seedurls.csv (header: url) from the same folder as this script.
-- Renders each URL with Playwright (headless Chromium) and saves the full page HTML
-  to output/raw_html/<url_key>.html
+Reads seed URLs from seedurls.csv and renders each with Playwright (headless Chromium).
+Saves fully-rendered HTML to output/raw_html/ for later parsing.
+Includes retry logic and network idle detection for JavaScript-heavy sites.
 """
 
 import csv
@@ -17,12 +17,13 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
-# --------- Config ----------
+# ===== CONFIGURATION =====
 SCRIPT_DIR = Path(__file__).resolve().parent
 SEED_CSV = SCRIPT_DIR / "seedurls.csv"
 OUT_DIR = SCRIPT_DIR / "output" / "raw_html"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Playwright browser settings
 NAV_TIMEOUT_MS = 45_000
 WAIT_AFTER_NETWORK_IDLE_S = 1.0
 MAX_RETRIES = 2
@@ -34,11 +35,12 @@ USER_AGENT = (
 
 
 def url_to_filename(url: str) -> str:
-    """Create a filesystem-safe url_key for saving HTML from a URL."""
+    """Convert URL to filesystem-safe filename using domain and path."""
     parsed = urlparse(url)
     domain = parsed.netloc.replace(":", "_")
     path_part = parsed.path.strip("/").replace("/", "_") or "index"
     base = f"{domain}__{path_part}"
+    # Add SHA1 hash suffix to avoid collisions
     h = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
 
     url_key = "".join(
@@ -49,6 +51,7 @@ def url_to_filename(url: str) -> str:
 
 
 def read_seed_urls(csv_path: Path):
+    """Parse seedurls.csv and return list of URLs to fetch."""
     if not csv_path.exists():
         print(f"seedurls.csv not found at: {csv_path}")
         return []
@@ -60,6 +63,7 @@ def read_seed_urls(csv_path: Path):
             if "url" in row and row["url"].strip():
                 urls.append(row["url"].strip())
             else:
+                # Fallback for first column if header is missing
                 first = next(iter(row.values()), "").strip()
                 if first:
                     urls.append(first)
@@ -67,6 +71,7 @@ def read_seed_urls(csv_path: Path):
 
 
 def scroll_page_slowly(page):
+    """Simulate user scrolling to trigger lazy-loaded content."""
     page.evaluate(
         """() => {
             return new Promise(resolve => {
@@ -87,22 +92,32 @@ def scroll_page_slowly(page):
 
 
 def fetch_single_page(page, url: str, out_path: Path) -> bool:
+    """Fetch a single URL and save its rendered HTML."""
     try:
+        # # DEBUG: Log fetch attempt
+        # print(f"[DEBUG] Starting fetch: {url}")
+        
         page.set_viewport_size(BROWSER_VIEWPORT)
         page.set_extra_http_headers({"User-Agent": USER_AGENT})
+        # Wait for network idle before considering page loaded
         page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
 
         time.sleep(WAIT_AFTER_NETWORK_IDLE_S)
 
+        # Scroll to load lazy-loaded content
         try:
             scroll_page_slowly(page)
         except Exception:
+            # # DEBUG: Scrolling might fail on some pages
             pass
 
         time.sleep(0.2)
 
+        # Save rendered HTML
         html = page.content()
         out_path.write_text(html, encoding="utf-8")
+        # # DEBUG: Confirm save
+        # print(f"[DEBUG] Saved {len(html)} bytes to {out_path}")
         return True
 
     except PlaywrightTimeoutError as te:
@@ -115,10 +130,13 @@ def fetch_single_page(page, url: str, out_path: Path) -> bool:
 
 
 def main():
+    """Main entry point: fetch all URLs from seed list."""
     urls = read_seed_urls(SEED_CSV)
     if not urls:
         print("No URLs found in seedurls.csv")
         return
+
+    print(f"[INFO] Starting fetch of {len(urls)} URLs...")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -145,6 +163,7 @@ def main():
                             print(f"  -> saved: {out_file}")
                         else:
                             print(f"  -> attempt {attempt} failed")
+                            # Exponential backoff before retry
                             time.sleep(1.5 ** attempt)
 
                     finally:
@@ -159,6 +178,8 @@ def main():
         finally:
             context.close()
             browser.close()
+
+    print("[INFO] Fetching complete!")
 
 
 if __name__ == "__main__":
