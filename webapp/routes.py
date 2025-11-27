@@ -12,32 +12,19 @@ from app import app
 from db import db
 from models import Scheme, SchemeRule, UserProfile, MatchResult
 
-# ------------------------------------------------------------------
-# Matcher integration: try direct python import first, else HTTP call
-# Person B should expose a function: match_profile(profile: dict) -> list[dict]
-# Each dict: {"scheme_id": int, "result": "eligible"/"maybe"/"not", "score": float, "reasons": {...}}
-# ------------------------------------------------------------------
-MATCHER_TYPE = "none"
+matcher_type = "none"
 match_profile = None
 
 try:
-    # try direct import (preferred)
     from matcher.engine import match_profile as match_profile_py  # adjust path if needed
     match_profile = match_profile_py
-    MATCHER_TYPE = "python"
+    matcher_type = "python"
     app.logger.info("Matcher integrated: python import")
 except Exception:
-    # fallback to HTTP
     MATCHER_HTTP_URL = os.getenv("MATCHER_HTTP_URL", "http://localhost:8000/match")
-    MATCHER_TYPE = "http"
+    matcher_type = "http"
     app.logger.info("Matcher not available via python import; will use HTTP at %s", MATCHER_HTTP_URL)
 
-
-# ------------------------------------------------------------------
-# Basic admin auth decorator (very small, env-configured)
-# Use ADMIN_USER and ADMIN_PASS environment variables.
-# For production, replace with proper auth!
-# ------------------------------------------------------------------
 def check_admin_auth(username, password):
     return username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "password")
 
@@ -53,21 +40,12 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated
 
-
-# ------------------------------------------------------------------
-# Landing page
-# ------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html") if os.path.exists(os.path.join(app.root_path, "templates", "index.html")) else "Gov Schemes - Home"
 
-
-# ------------------------------------------------------------------
-# Simple profile input page (Jinja form) - client-side JS posts to /api/match
-# ------------------------------------------------------------------
 @app.route("/match", methods=["GET"])
 def match_form():
-    # If template exists, render it. Else show a minimal HTML form
     template_path = os.path.join(app.root_path, "templates", "match_form.html")
     if os.path.exists(template_path):
         return render_template("match_form.html")
@@ -100,10 +78,6 @@ def match_form():
     </script>
     """
 
-
-# ------------------------------------------------------------------
-# API: get scheme details + its parsed rules
-# ------------------------------------------------------------------
 @app.route("/api/scheme/<int:scheme_id>", methods=["GET"])
 def api_scheme(scheme_id):
     scheme = Scheme.query.get_or_404(scheme_id)
@@ -124,11 +98,6 @@ def api_scheme(scheme_id):
     })
 
 
-# ------------------------------------------------------------------
-# API: run matching for a profile
-# - saves user profile into users table
-# - persists match results into matches
-# ------------------------------------------------------------------
 @app.route("/api/match", methods=["POST"])
 def api_match():
     try:
@@ -136,7 +105,6 @@ def api_match():
         if not profile or not isinstance(profile, dict):
             return jsonify({"error": "Profile JSON required"}), 400
 
-        # Save user profile. If a user is logged in, attach profile to that user.
         user = None
         if session.get('user_id'):
             try:
@@ -151,19 +119,16 @@ def api_match():
             user = UserProfile(profile=profile)
             db.session.add(user)
             db.session.commit()
-            # store anonymous user id in session so subsequent calls can be linked
             session['user_id'] = user.id
 
-        # Call matcher
         results = []
-        if MATCHER_TYPE == "python" and match_profile:
+        if matcher_type == "python" and match_profile:
             try:
                 results = match_profile(profile)
             except Exception as e:
                 app.logger.exception("Matcher (python) failed: %s", e)
                 return jsonify({"error": "Internal matcher error", "detail": str(e)}), 500
         else:
-            # HTTP fallback
             TRY_URL = os.getenv("MATCHER_HTTP_URL", "http://localhost:8000/match")
             try:
                 import requests
@@ -172,15 +137,11 @@ def api_match():
                 results = resp.json()
             except Exception as e:
                 app.logger.exception("Matcher (http) failed: %s", e)
-                # As a fallback, return empty results (or stub) but keep user saved
-                # You may prefer to return 500 instead.
                 return jsonify({"error": "Matcher service unavailable", "detail": str(e)}), 502
 
-        # Validate results format (basic)
         if not isinstance(results, list):
             return jsonify({"error": "Invalid matcher response format"}), 502
 
-        # Persist match results
         saved = []
         for r in results:
             try:
@@ -207,15 +168,9 @@ def api_match():
         return jsonify({"error": "Internal server error", "detail": str(e)}), 500
 
 
-# ------------------------------------------------------------------
-# Example analytics endpoint: schemes grouped by source_url (demonstration)
-# Adapt to your actual 'state' column or extraction
-# ------------------------------------------------------------------
 @app.route("/api/stats/schemes_by_state", methods=["GET"])
 def stats_schemes_by_state():
     try:
-        # Example: if schemes store state in raw_html_path or description, you'd adapt this.
-        # Here we group by source_url as a placeholder.
         from sqlalchemy import func
         rows = db.session.query(Scheme.source_url, func.count(Scheme.id)).group_by(Scheme.source_url).all()
         return jsonify([{"source_url": r[0], "count": r[1]} for r in rows])
@@ -223,20 +178,14 @@ def stats_schemes_by_state():
         app.logger.exception("Error computing stats")
         return jsonify({"error": "Failed to compute stats", "detail": str(e)}), 500
 
-
-# ------------------------------------------------------------------
-# ADMIN UI: list unverified/low-confidence rules
-# ------------------------------------------------------------------
 @app.route("/admin", methods=["GET"])
 @require_admin
 def admin_index():
     try:
         pending = SchemeRule.query.filter_by(verified=False).order_by(SchemeRule.parser_confidence.asc()).limit(200).all()
-        # If template exists, render it
         template_path = os.path.join(app.root_path, "templates", "admin_index.html")
         if os.path.exists(template_path):
             return render_template("admin_index.html", pending=pending)
-        # Minimal HTML fallback
         html = "<h1>Admin - Pending Rules</h1><ul>"
         for r in pending:
             html += f"<li>Rule #{r.id} (scheme={r.scheme_id}) - confidence={r.parser_confidence} - <a href='{url_for('admin_verify', rule_id=r.id)}'>verify</a></li>"
@@ -247,15 +196,11 @@ def admin_index():
         return "Admin error", 500
 
 
-# ------------------------------------------------------------------
-# ADMIN: verify & edit a single rule
-# ------------------------------------------------------------------
 @app.route("/admin/verify/<int:rule_id>", methods=["GET", "POST"])
 @require_admin
 def admin_verify(rule_id):
     rule = SchemeRule.query.get_or_404(rule_id)
     if request.method == "POST":
-        # admin submitted edited JSON (form or raw)
         raw = request.form.get("rule_json") or request.get_data(as_text=True)
         if not raw:
             return "No rule_json submitted", 400
@@ -267,11 +212,9 @@ def admin_verify(rule_id):
         rule.verified = True
         db.session.commit()
         return redirect(url_for("admin_index"))
-    # GET -> render verification page
     template_path = os.path.join(app.root_path, "templates", "admin_verify.html")
     if os.path.exists(template_path):
         return render_template("admin_verify.html", rule=rule)
-    # Minimal HTML fallback
     return f"""
     <h2>Verify Rule #{rule.id} (scheme {rule.scheme_id})</h2>
     <h3>Original snippet</h3>
@@ -284,9 +227,6 @@ def admin_verify(rule_id):
     """
 
 
-# ------------------------------------------------------------------
-# ADMIN API: update rule (JSON)
-# ------------------------------------------------------------------
 @app.route("/admin/update_rule", methods=["POST"])
 @require_admin
 def admin_update_rule():
@@ -299,7 +239,6 @@ def admin_update_rule():
         rule = SchemeRule.query.get_or_404(rule_id)
         rule.rule_json = new_rule
         rule.verified = True
-        # optional: update parser_confidence
         if "parser_confidence" in payload:
             try:
                 rule.parser_confidence = float(payload["parser_confidence"])
@@ -312,9 +251,6 @@ def admin_update_rule():
         return jsonify({"error": "update failed", "detail": str(e)}), 500
 
 
-# ------------------------------------------------------------------
-# Error handlers (optional niceties)
-# ------------------------------------------------------------------
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Not found"}), 404

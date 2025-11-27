@@ -28,12 +28,10 @@ class RuleParser:
             
             'gender_keywords': r'\b(women|woman|female|widow|widows|men|man|male)\b',
             
-            # FIX 1: Renamed key to 'state_regex' for clarity, though logic uses the regex
             'state_regex': r'\bresident\s+(?:of|in)?\s+([A-Z]?[a-zA-Z0-9&\-\s]+?)(?:[\.\n,;]|$)',
             
             'not_eligible_for': r'([A-Za-z0-9\s\-\&]+?)\s+(?:are|is|were|being|be)\s+not\s+eligible|not\s+eligible\s+for\s+([A-Za-z0-9\s\-\&]+)',
             
-            # FIX 2: Added Caste Regex
             'caste_sc': r'\b(sc|scheduled\s+caste|scheduled\s+castes)\b',
             'caste_st': r'\b(st|scheduled\s+tribe|scheduled\s+tribes)\b',
             'caste_obc': r'\b(obc|other\s+backward\s+class|backward\s+class)\b',
@@ -52,8 +50,6 @@ class RuleParser:
             if '.' in s: return float(s)
             return int(s)
         except ValueError: return None
-
-    # --- PARSING HELPERS ---
 
     def _parse_age(self, text: str) -> List[dict]:
         rules = []
@@ -100,7 +96,6 @@ class RuleParser:
         return s
 
     def _parse_caste(self, text: str) -> List[dict]:
-        # FIX 2: Logic to handle caste requirements
         castes_found = set()
         if self.compiled_patterns['caste_sc'].search(text): castes_found.add("Scheduled Caste (SC)")
         if self.compiled_patterns['caste_st'].search(text): castes_found.add("Scheduled Tribe (ST)")
@@ -108,14 +103,12 @@ class RuleParser:
         if self.compiled_patterns['caste_general'].search(text): castes_found.add("General/Unreserved")
         
         if castes_found:
-            # Using 'in' operator to allow any of the detected castes
             return [{"field": "caste", "op": "in", "value": list(castes_found)}]
         return []
 
     def _parse_categorical(self, text: str) -> List[dict]:
         rules = []
 
-        # Exclusions
         excluded = set()
         for m in self.compiled_patterns['not_eligible_for'].finditer(text):
             group = (m.group(1) or m.group(2) or "").strip()
@@ -125,7 +118,6 @@ class RuleParser:
                 norm = self._normalize_token(part)
                 if norm: excluded.add(norm)
 
-        # Occupation
         occs = self.compiled_patterns['occupation_regex'].findall(text)
         occ_norms = sorted({self._normalize_token(o) for o in occs if o})
         positive_occs = [o for o in occ_norms if o not in excluded]
@@ -134,7 +126,6 @@ class RuleParser:
         if excluded:
             rules.append({"field": "occupation", "op": "not_in", "value": sorted(list(excluded))})
 
-        # Gender
         genders = self.compiled_patterns['gender_keywords'].findall(text)
         if genders:
             lowered = [g.lower() for g in genders]
@@ -143,12 +134,10 @@ class RuleParser:
             elif any(k in lowered for k in ('male', 'men', 'man')):
                 rules.append({"field": "gender", "op": "==", "value": "male"})
 
-        # FIX 1: State (Renamed field from 'location' to 'state')
         loc = self.compiled_patterns['state_regex'].search(text)
         if loc:
             location = loc.group(1).strip()
             location = re.sub(r'\s+state$', '', location, flags=re.IGNORECASE).strip()
-            # Use 'state' to match your database profile field
             rules.append({"field": "state", "op": "in", "value": [location]})
 
         return rules
