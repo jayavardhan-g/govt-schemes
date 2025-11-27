@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+{% block body %}
+
+<div class="dashboard-header">
+  <div class="welcome-msg">
+    <h2>👋 Your Dashboard</h2>
+    <p class="muted">Schemes matched to your saved profile.</p>
+  </div>
+  <div class="dashboard-actions">
+    <a href="/profile" class="btn btn-outline">✏️ Update My Profile</a>
+  </div>
+</div>
+
+<hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+
+<div class="controls" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
+  <div>
+    <label for="filterStatus">Filter:</label>
+    <select id="filterStatus">
+      <option value="all">All</option>
+      <option value="Eligible">Eligible</option>
+      <option value="Maybe Eligible">Maybe Eligible</option>
+      <option value="Not Eligible">Not Eligible</option>
+    </select>
+  </div>
+
+  <div>
+    <label for="searchBox">Search:</label>
+    <input id="searchBox" type="search" placeholder="Scheme name..." />
+  </div>
+
+  <div style="margin-left:auto;">
+    <button id="sortBtn" class="btn">Sort: <span id="sortDirection">desc</span></button>
+  </div>
+</div>
+
+<table id="resultsTable" style="width:100%; border-collapse:collapse;">
+  <thead>
+    <tr style="text-align:left; border-bottom:1px solid #e6e6e6;">
+      <th style="padding:8px 6px;">Scheme</th>
+      <th style="padding:8px 6px;">Status</th>
+      <th style="padding:8px 6px; cursor:pointer;" id="hdrMatch">Match % ▲▼</th>
+      <th style="padding:8px 6px;">Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in results %}
+      <tr class="result-row" data-title="{{ r.title|lower }}" data-status="{{ r.result }}" data-score="{{ r.score }}">
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">{{ r.title }}</td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">
+          {% if r.result == 'Eligible' %}
+            <span class="badge" style="background:#28a745;">Eligible</span>
+          {% elif r.result == 'Maybe Eligible' %}
+            <span class="badge" style="background:#f0ad4e; color:#111;">Maybe</span>
+          {% else %}
+            <span class="badge" style="background:#d9534f;">Not eligible</span>
+          {% endif %}
+        </td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3; width:260px;">
+          <div class="progress-row" title="{{ '%.2f'|format(r.score) }}%">
+            <div class="progress-bg" aria-hidden="true">
+              <div class="progress-fill" style="width: {{ r.score }}%;"></div>
+            </div>
+            <div class="progress-text">{{ '%.2f'|format(r.score) }}%</div>
+          </div>
+        </td>
+
+        <td style="padding:10px 6px; border-bottom:1px solid #f3f3f3;">
+          <a href="/scheme/{{ r.scheme_id }}" class="btn small">View Details</a>
+        </td>
+      </tr>
+    {% else %}
+      <tr>
+        <td colspan="4" style="padding:30px; text-align:center; color:#666;">
+          <h3>No matches found.</h3>
+          <p>Try updating your profile details to see more schemes.</p>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<style>
+.dashboard-header {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;
+}
+.welcome-msg h2 { margin: 0 0 5px 0; font-size: 1.5rem; }
+.dashboard-actions { display: flex; gap: 10px; align-items: center;}
+.btn-outline { 
+  background: white; border: 1px solid #007bff; color: #007bff; 
+  padding: 8px 12px; border-radius: 6px; text-decoration: none; font-weight: 600;
+}
+.btn-outline:hover { background: #f0f7ff; }
+
+/* Common Styles */
+.btn { background:#007bff; color:#fff; padding:6px 10px; border-radius:6px; text-decoration:none; border:none; cursor:pointer; }
+.btn.small { padding:6px 8px; font-size:0.9rem; }
+.badge { color:#fff; padding:4px 8px; border-radius:6px; font-weight:700; display:inline-block; font-size: 0.85rem;}
+.progress-row { display:flex; align-items:center; gap:8px; }
+.progress-bg { width:160px; height:12px; background:#f1f1f1; border-radius:8px; overflow:hidden; }
+.progress-fill { height:12px; width:0%; transition:width .4s ease; }
+.progress-text { min-width:48px; font-weight:600; color:#222; font-size: 0.9rem;}
+.progress-fill.green { background:linear-gradient(90deg,#6bc16b,#2fa84f); }
+.progress-fill.yellow { background:linear-gradient(90deg,#f7c76b,#f0ad4e); }
+.progress-fill.red { background:linear-gradient(90deg,#f18a8a,#d9534f); }
+</style>
+
+<script>
+(function(){
+  const table = document.getElementById('resultsTable');
+  const tbody = table.querySelector('tbody');
+  const sortBtn = document.getElementById('sortBtn');
+  const sortDirectionSpan = document.getElementById('sortDirection');
+  const hdrMatch = document.getElementById('hdrMatch');
+  const filterStatus = document.getElementById('filterStatus');
+  const searchBox = document.getElementById('searchBox');
+
+  function colorizeRows() {
+    document.querySelectorAll('.result-row').forEach(row => {
+      const score = parseFloat(row.dataset.score) || 0;
+      const status = row.dataset.status || '';
+      const fill = row.querySelector('.progress-fill');
+      fill.classList.remove('green','yellow','red');
+      if (status === 'Eligible') fill.classList.add('green');
+      else if (status === 'Maybe Eligible') fill.classList.add('yellow');
+      else fill.classList.add('red');
+      fill.style.width = Math.max(0, Math.min(100, score)) + '%';
+    });
+  }
+
+  let sortDesc = true;
+  function sortRows() {
+    const rows = Array.from(tbody.querySelectorAll('.result-row'));
+    rows.sort((a,b) => {
+      const sa = parseFloat(a.dataset.score) || 0;
+      const sb = parseFloat(b.dataset.score) || 0;
+      return sortDesc ? (sb - sa) : (sa - sb);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+
+  function applyFilters() {
+    const statusFilter = filterStatus.value;
+    const q = (searchBox.value || '').trim().toLowerCase();
+    document.querySelectorAll('.result-row').forEach(row => {
+      const title = row.dataset.title || '';
+      const status = row.dataset.status || '';
+      let visible = true;
+      if (statusFilter !== 'all' && status !== statusFilter) visible = false;
+      if (q && title.indexOf(q) === -1) visible = false;
+      row.style.display = visible ? '' : 'none';
+    });
+  }
+
+  if(sortBtn) sortBtn.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(hdrMatch) hdrMatch.addEventListener('click', () => { sortDesc = !sortDesc; sortDirectionSpan.innerText = sortDesc ? 'desc' : 'asc'; sortRows(); });
+  if(filterStatus) filterStatus.addEventListener('change', applyFilters);
+  if(searchBox) searchBox.addEventListener('input', applyFilters);
+
+  colorizeRows();
+  sortRows();
+})();
+</script>
+
+{% endblock %}
