@@ -1,8 +1,0 @@
-Flask>=2.0
-flask
-dotenv
-flask_sqlalchemy
-psycopg2
-alembic
-playwright
-bs4
